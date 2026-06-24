@@ -22,6 +22,7 @@ pub async fn download_track(
     output_dir: &str,
     quality: &str,
     folder_structure: &FolderStructure,
+    custom_folder_template: &str,
     app: &tauri::AppHandle,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DownloadResult, String> {
@@ -65,33 +66,34 @@ pub async fn download_track(
     let ext = get_quality_ext(&actual_quality);
     let bf_key = crypto::get_blowfish_key(&sng_id);
 
-    // Build the directory path based on folder structure
-    let base_dir = PathBuf::from(output_dir);
-    let download_dir = match folder_structure {
-        FolderStructure::Flat => base_dir,
-        FolderStructure::ArtistTrack => {
-            base_dir.join(sanitize_path_component(&artist))
-        }
-        FolderStructure::ArtistAlbumTrack => {
-            base_dir
-                .join(sanitize_path_component(&artist))
-                .join(sanitize_path_component(&album_title))
-        }
-        FolderStructure::AlbumTrack => {
-            base_dir.join(sanitize_path_component(&album_title))
-        }
-    };
+    let download_path = build_download_path(
+        output_dir,
+        folder_structure,
+        custom_folder_template,
+        &artist,
+        &album_title,
+        &full_title,
+        track_data,
+        ext,
+    )?;
+    let download_dir = download_path
+        .parent()
+        .ok_or("Cannot determine download directory")?
+        .to_path_buf();
 
     std::fs::create_dir_all(&download_dir).map_err(|e| e.to_string())?;
 
-    let filename = clean_filename(&format!("{} - {}{}", artist, full_title, ext));
+    let base_stem = download_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
 
     // Check if file exists and create unique filename if needed
-    let mut download_path = download_dir.join(&filename);
+    let mut download_path = download_path;
     let mut counter = 1;
     while download_path.exists() {
-        let base_name = clean_filename(&format!("{} - {}", artist, full_title));
-        let new_filename = format!("{} ({}){}", base_name, counter, ext);
+        let new_filename = format!("{} ({}){}", base_stem, counter, ext);
         download_path = download_dir.join(&new_filename);
         counter += 1;
 
@@ -422,6 +424,89 @@ async fn write_flac_tags(
         .map_err(|e| format!("FLAC tag write error: {}", e))?;
 
     Ok(())
+}
+
+fn build_download_path(
+    output_dir: &str,
+    folder_structure: &FolderStructure,
+    custom_folder_template: &str,
+    artist: &str,
+    album_title: &str,
+    full_title: &str,
+    track_data: &Value,
+    ext: &str,
+) -> Result<PathBuf, String> {
+    let base_dir = PathBuf::from(output_dir);
+
+    if *folder_structure != FolderStructure::Custom {
+        let download_dir = match folder_structure {
+            FolderStructure::Flat => base_dir,
+            FolderStructure::ArtistTrack => base_dir.join(sanitize_path_component(artist)),
+            FolderStructure::ArtistAlbumTrack => base_dir
+                .join(sanitize_path_component(artist))
+                .join(sanitize_path_component(album_title)),
+            FolderStructure::AlbumTrack => base_dir.join(sanitize_path_component(album_title)),
+            FolderStructure::Custom => unreachable!(),
+        };
+
+        return Ok(download_dir.join(clean_filename(&format!("{} - {}{}", artist, full_title, ext))));
+    }
+
+    let release_date = track_data["PHYSICAL_RELEASE_DATE"]
+        .as_str()
+        .filter(|date| !date.is_empty())
+        .or_else(|| track_data["DIGITAL_RELEASE_DATE"].as_str())
+        .unwrap_or("Unknown Date");
+    let release_year = if release_date.len() >= 4 { &release_date[..4] } else { release_date };
+    let track_number = parse_u32_from_value(&track_data["TRACK_NUMBER"])
+        .map(|n| format!("{:02}", n))
+        .unwrap_or_else(|| "00".to_string());
+    let disc_number = parse_u32_from_value(&track_data["DISK_NUMBER"])
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "1".to_string());
+
+    let template = custom_folder_template.trim();
+    let template = if template.is_empty() {
+        "{artist}/{release_date} - {album}/{track_number} - {title}"
+    } else {
+        template
+    };
+
+    let rendered = template
+        .replace("{artist}", artist)
+        .replace("{album}", album_title)
+        .replace("{title}", full_title)
+        .replace("{track_number}", &track_number)
+        .replace("{track}", &track_number)
+        .replace("{disc_number}", &disc_number)
+        .replace("{disc}", &disc_number)
+        .replace("{release_date}", release_date)
+        .replace("{release_year}", release_year)
+        .replace("{year}", release_year);
+
+    let mut parts = rendered
+        .split(['/', '\\'])
+        .map(sanitize_path_component)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        parts.push(clean_filename(&format!("{} - {}", artist, full_title)));
+    }
+
+    let file_name = parts.pop().unwrap();
+    let mut path = base_dir;
+    for part in parts {
+        path = path.join(part);
+    }
+
+    let file_name = if file_name.ends_with(ext) {
+        file_name
+    } else {
+        format!("{}{}", file_name, ext)
+    };
+
+    Ok(path.join(clean_filename(&file_name)))
 }
 
 fn emit_progress(

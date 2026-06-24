@@ -146,7 +146,10 @@
       "flat": "Flat - All files in download folder",
       "artistTrack": "Artist/Track - Artist Name/Track.mp3",
       "artistAlbumTrack": "Artist/Album/Track - Artist Name/Album Name/Track.mp3",
-      "albumTrack": "Album/Track - Album Name/Track.mp3"
+      "albumTrack": "Album/Track - Album Name/Track.mp3",
+      "custom": "Custom template",
+      "customPlaceholder": "{artist}/{release_date} - {album}/{track_number} - {title}",
+      "customHint": "Available placeholders: {artist}, {album}, {title}, {track_number}, {disc_number}, {release_date}, {release_year}. Use / to create folders."
     },
     "theme": {
       "label": "Theme",
@@ -185,6 +188,7 @@
       "arlInvalid": "ARL token appears to be invalid (too short).",
       "outputDirRequired": "Download folder is required.",
       "qualityInvalid": "Invalid quality setting.",
+      "customFolderTemplateRequired": "Custom folder template is required.",
       "historyCleared": "Search history cleared successfully!"
     }
   },

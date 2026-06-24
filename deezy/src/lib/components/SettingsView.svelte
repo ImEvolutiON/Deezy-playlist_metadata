@@ -17,6 +17,7 @@
   let outputDir = $state('');
   let quality = $state('MP3_320');
   let folderStructure = $state('flat');
+  let customFolderTemplate = $state('{artist}/{release_date} - {album}/{track_number} - {title}');
   let currentTheme = $state<Theme>('dark');
   let enableNotifications = $state(true);
   let enableSearchHistory = $state(true);
@@ -31,6 +32,15 @@
 
   const VALID_QUALITIES = ['MP3_128', 'MP3_320', 'FLAC'] as const;
   const MIN_ARL_LENGTH = 100;
+  const FOLDER_TEMPLATE_PLACEHOLDERS = {
+    artist: '{artist}',
+    album: '{album}',
+    title: '{title}',
+    track_number: '{track_number}',
+    disc_number: '{disc_number}',
+    release_date: '{release_date}',
+    release_year: '{release_year}'
+  };
 
   $effect(() => {
     settingsArlDraft.set(arl);
@@ -54,6 +64,7 @@
         if (settings.output_dir) outputDir = settings.output_dir;
         if (settings.quality) quality = settings.quality;
         if (settings.folder_structure) folderStructure = settings.folder_structure;
+        if (settings.custom_folder_template) customFolderTemplate = settings.custom_folder_template;
         if (settings.theme) currentTheme = settings.theme;
         if (settings.locale) selectedLocale = settings.locale;
         if (settings.notifications_enabled !== undefined) {
@@ -113,6 +124,10 @@
       return { valid: false, error: $_('settings.status.qualityInvalid') };
     }
 
+    if (folderStructure === 'custom' && !customFolderTemplate.trim()) {
+      return { valid: false, error: $_('settings.status.customFolderTemplateRequired') };
+    }
+
     return { valid: true };
   }
   
@@ -134,6 +149,7 @@
           output_dir: outputDir.trim(),
           quality: quality,
           folder_structure: folderStructure,
+          custom_folder_template: customFolderTemplate.trim(),
           theme: currentTheme,
           notifications_enabled: enableNotifications,
           enable_search_history: enableSearchHistory,
@@ -333,7 +349,18 @@
         <option value="artist_track">{$_('settings.folderStructure.artistTrack')}</option>
         <option value="artist_album_track">{$_('settings.folderStructure.artistAlbumTrack')}</option>
         <option value="album_track">{$_('settings.folderStructure.albumTrack')}</option>
+        <option value="custom">{$_('settings.folderStructure.custom')}</option>
       </select>
+      {#if folderStructure === 'custom'}
+        <input
+          type="text"
+          bind:value={customFolderTemplate}
+          placeholder={$_('settings.folderStructure.customPlaceholder', { values: FOLDER_TEMPLATE_PLACEHOLDERS })}
+        />
+        <p class="form-hint">
+          {$_('settings.folderStructure.customHint', { values: FOLDER_TEMPLATE_PLACEHOLDERS })}
+        </p>
+      {/if}
     </div>
 
     <div class="form-group">

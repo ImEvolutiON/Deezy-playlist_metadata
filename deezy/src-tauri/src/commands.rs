@@ -211,7 +211,7 @@ pub async fn download_track(
     }
 
     // Get or recreate the client
-    let (mut client, output_dir, quality, folder_structure, arl) = {
+    let (mut client, output_dir, quality, folder_structure, custom_folder_template, arl) = {
         let lock = state.client.lock().await;
         let settings = state.settings.lock().await;
         
@@ -226,6 +226,7 @@ pub async fn download_track(
             settings.output_dir.clone(),
             settings.quality.clone(),
             settings.folder_structure.clone(),
+            settings.custom_folder_template.clone(),
             settings.arl.clone(),
         )
     };
@@ -260,6 +261,7 @@ pub async fn download_track(
         &output_dir,
         &effective_quality,
         &folder_structure,
+        &custom_folder_template,
         &app,
         cancel_flag.clone(),
     )
@@ -289,6 +291,7 @@ pub async fn download_track(
                         &output_dir,
                         &retry_quality,
                         &folder_structure,
+                        &custom_folder_template,
                         &app,
                         cancel_flag.clone(),
                     )

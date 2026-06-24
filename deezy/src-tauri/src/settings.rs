@@ -13,6 +13,7 @@ pub enum FolderStructure {
     ArtistTrack,
     ArtistAlbumTrack,
     AlbumTrack,
+    Custom,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +24,8 @@ pub struct Settings {
     pub quality: String,
     #[serde(default)]
     pub folder_structure: FolderStructure,
+    #[serde(default = "default_custom_folder_template")]
+    pub custom_folder_template: String,
     #[serde(default)]
     pub theme: Option<String>,
     #[serde(default)]
@@ -47,6 +50,10 @@ fn default_locale() -> String {
     "en".to_string()
 }
 
+fn default_custom_folder_template() -> String {
+    "{artist}/{release_date} - {album}/{track_number} - {title}".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         let home = std::env::var("USERPROFILE")
@@ -62,6 +69,7 @@ impl Default for Settings {
             output_dir: default_dir.to_string_lossy().to_string(),
             quality: "MP3_320".into(),
             folder_structure: FolderStructure::default(),
+            custom_folder_template: default_custom_folder_template(),
             theme: Some("system".to_string()),
             custom_theme: None,
             search_history: Vec::new(),
@@ -124,6 +132,10 @@ impl Settings {
         let valid_qualities = ["MP3_128", "MP3_320", "FLAC"];
         if !valid_qualities.contains(&self.quality.as_str()) {
             return Err(format!("Invalid quality '{}'. Must be one of: MP3_128, MP3_320, FLAC", self.quality));
+        }
+
+        if self.folder_structure == FolderStructure::Custom && self.custom_folder_template.trim().is_empty() {
+            return Err("Custom folder template is required".to_string());
         }
 
         Ok(())

@@ -146,7 +146,10 @@
       "flat": "Plano - Todos los archivos en la carpeta de descargas",
       "artistTrack": "Artista/Canción - Nombre del Artista/Canción.mp3",
       "artistAlbumTrack": "Artista/Álbum/Canción - Nombre del Artista/Nombre del Álbum/Canción.mp3",
-      "albumTrack": "Álbum/Canción - Nombre del Álbum/Canción.mp3"
+      "albumTrack": "Álbum/Canción - Nombre del Álbum/Canción.mp3",
+      "custom": "Plantilla personalizada",
+      "customPlaceholder": "{artist}/{release_date} - {album}/{track_number} - {title}",
+      "customHint": "Marcadores disponibles: {artist}, {album}, {title}, {track_number}, {disc_number}, {release_date}, {release_year}. Usa / para crear carpetas."
     },
     "theme": {
       "label": "Tema",
@@ -185,6 +188,7 @@
       "arlInvalid": "El token ARL parece ser inválido (muy corto).",
       "outputDirRequired": "Se requiere la carpeta de descargas.",
       "qualityInvalid": "Configuración de calidad inválida.",
+      "customFolderTemplateRequired": "Se requiere la plantilla de carpeta personalizada.",
       "historyCleared": "¡Historial de búsqueda limpiado exitosamente!"
     }
   },
