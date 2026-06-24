@@ -2,6 +2,15 @@
 
 All notable changes to Deezy are documented here.
 
+## [0.2.18] - 2026-06-24
+
+### Added
+
+- **Custom folder templates** – Added a custom folder structure option with placeholders for artist, album, title, track number, disc number, release date, and release year.
+- **Release checklist** – Added manual release documentation covering version bumps, verification, installer builds, tags, and GitHub release uploads.
+
+---
+
 ## [0.2.17] - 2026-05-05
 
 ### Added
