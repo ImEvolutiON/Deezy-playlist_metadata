@@ -648,7 +648,10 @@
     -webkit-appearance: none;
     margin: 0;
   }
-  .field input[type="number"] { -moz-appearance: textfield; }
+  .field input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
 
   .inline-pair {
     display: flex;
