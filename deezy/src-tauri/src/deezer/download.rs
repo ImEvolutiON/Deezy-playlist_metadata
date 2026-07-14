@@ -1,4 +1,4 @@
-use std::io::{ErrorKind, Write};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -611,13 +611,111 @@ fn finalize_download_file(
                 return Ok(candidate);
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(format!("Failed to finalize download file: {}", e)),
+            Err(link_error) => match copy_file_noclobber(temp_path, &candidate) {
+                Ok(()) => {
+                    cleanup_temp_file(temp_path);
+                    return Ok(candidate);
+                }
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                Err(copy_error) => {
+                    return Err(format!(
+                        "Failed to finalize download file (link: {}; copy fallback: {})",
+                        link_error, copy_error
+                    ));
+                }
+            },
         }
     }
 
     Err("Too many files with the same name".to_string())
 }
 
+fn copy_file_noclobber(source_path: &Path, destination_path: &Path) -> io::Result<()> {
+    let mut source = std::fs::File::open(source_path)?;
+    let mut destination = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination_path)?;
+
+    let copy_result = io::copy(&mut source, &mut destination)
+        .and_then(|_| destination.flush());
+    drop(destination);
+
+    if let Err(error) = copy_result {
+        // Do not leave a partial file that would be mistaken for a completed
+        // download or force later attempts to choose a numbered filename.
+        let _ = std::fs::remove_file(destination_path);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
 fn cleanup_temp_file(path: &Path) {
     let _ = std::fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_file_noclobber, finalize_download_file};
+    use std::io::ErrorKind;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "deezy-{}-{}-{}",
+            name,
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&dir).expect("test directory should be created");
+        dir
+    }
+
+    #[test]
+    fn finalization_uses_a_numbered_name_without_overwriting() {
+        let dir = test_dir("finalize-collision");
+        let temp_path = dir.join("track.mp3.123.0.deezy.part");
+        let preferred_path = dir.join("Artist - Track.mp3");
+        std::fs::write(&temp_path, b"new audio").expect("temp audio should be written");
+        std::fs::write(&preferred_path, b"existing audio")
+            .expect("existing audio should be written");
+
+        let result = finalize_download_file(
+            &temp_path,
+            &preferred_path,
+            &dir,
+            "Artist - Track",
+            ".mp3",
+        )
+        .expect("finalization should succeed");
+
+        assert_eq!(result, dir.join("Artist - Track (1).mp3"));
+        assert_eq!(std::fs::read(&preferred_path).unwrap(), b"existing audio");
+        assert_eq!(std::fs::read(&result).unwrap(), b"new audio");
+        assert!(!temp_path.exists());
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn copy_fallback_never_overwrites_an_existing_file() {
+        let dir = test_dir("copy-no-clobber");
+        let source_path = dir.join("source.part");
+        let destination_path = dir.join("destination.mp3");
+        std::fs::write(&source_path, b"new audio").expect("source should be written");
+        std::fs::write(&destination_path, b"existing audio")
+            .expect("destination should be written");
+
+        let error = copy_file_noclobber(&source_path, &destination_path)
+            .expect_err("copy should reject an existing destination");
+
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&destination_path).unwrap(), b"existing audio");
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
 }
