@@ -2,6 +2,25 @@
 
 All notable changes to Deezy are documented here.
 
+## [0.2.19] - 2026-07-14
+
+### Fixed
+
+- **Concurrent download file collisions** – Downloads now reserve temporary and final filenames atomically, preventing simultaneous tracks with the same destination name from overwriting or interfering with each other.
+- **Cross-filesystem finalization** – Added a no-clobber copy fallback for filesystems that do not support hard links, including cleanup of incomplete destination files when finalization fails.
+- **Download activity tracking** – Kept the queue manager authoritative for active download counts so progress events cannot introduce incorrect or negative counts.
+- **Cancellation cleanup** – Download cancellation registrations are now removed on every completion path, and duplicate active track IDs are rejected safely.
+- **Shutdown history persistence** – Pending debounced download-history updates are flushed before the application exits, including tray-initiated exits.
+- **Number input CSS warning** – Added the standard `appearance` property alongside `-moz-appearance` in the tag editor.
+
+### Changed
+
+- **Async runtime responsiveness** – Moved blocking file writing, metadata tagging, settings, history, theme, and credential-store operations away from Tokio worker threads where appropriate.
+- **Frontend IPC typing** – Replaced remaining untyped settings and tray payloads with shared TypeScript interfaces, including settings updates, folder structures, and tray state.
+- **Focused module structure** – Split the large command handler, Deezer client, and search view files into smaller modules organized by responsibility without changing their public behavior.
+
+---
+
 ## [0.2.18] - 2026-06-24
 
 ### Added

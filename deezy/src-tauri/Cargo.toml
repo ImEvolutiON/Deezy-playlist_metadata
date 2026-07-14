@@ -1,6 +1,6 @@
 [package]
 name = "deezy"
-version = "0.2.18"
+version = "0.2.19"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -35,4 +35,3 @@ regex = "1"
 lazy_static = "1.4"
 url = "2"
 base64 = "0.22"
-
