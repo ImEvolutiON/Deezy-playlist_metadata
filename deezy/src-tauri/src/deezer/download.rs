@@ -1,7 +1,7 @@
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use futures::StreamExt;
 use id3::TagLike;
@@ -89,26 +89,6 @@ pub async fn download_track(
         .unwrap_or("Unknown")
         .to_string();
 
-    // Check if file exists and create unique filename if needed
-    let mut download_path = download_path;
-    let mut counter = 1;
-    while download_path.exists() {
-        let new_filename = format!("{} ({}){}", base_stem, counter, ext);
-        download_path = download_dir.join(&new_filename);
-        counter += 1;
-
-        // Prevent infinite loop
-        if counter > 1000 {
-            return Err("Too many files with the same name".to_string());
-        }
-    }
-
-    let temp_download_path = download_path.with_extension(format!(
-        "{}{}",
-        ext.trim_start_matches('.'),
-        IN_PROGRESS_SUFFIX
-    ));
-
     emit_progress(app, track_id, &full_title, 5.0, "downloading");
 
     let response = client
@@ -132,10 +112,11 @@ pub async fn download_track(
     }
 
     let total_size = total_size_opt.unwrap_or(0);
+    // Atomically reserve a unique temporary file. Different tracks can resolve
+    // to the same display filename, so deriving the temp path only from the
+    // destination would let concurrent downloads truncate each other's data.
+    let (temp_download_path, mut file) = create_temp_download_file(&download_path, track_id)?;
     let mut stream = response.bytes_stream();
-    let mut file =
-        std::fs::File::create(&temp_download_path).map_err(|e| format!("Cannot create file: {}", e))?;
-
     let mut buffer: Vec<u8> = Vec::new();
     let mut chunk_index = 0u64;
     let mut downloaded = 0u64;
@@ -257,10 +238,21 @@ pub async fn download_track(
         });
     }
 
-    if let Err(e) = std::fs::rename(&temp_download_path, &download_path) {
-        cleanup_temp_file(&temp_download_path);
-        return Err(format!("Failed to finalize download file: {}", e));
-    }
+    // Hard-linking is an atomic no-overwrite operation. If another concurrent
+    // download claimed the preferred name first, retry with a numbered name.
+    let download_path = match finalize_download_file(
+        &temp_download_path,
+        &download_path,
+        &download_dir,
+        &base_stem,
+        ext,
+    ) {
+        Ok(path) => path,
+        Err(e) => {
+            cleanup_temp_file(&temp_download_path);
+            return Err(e);
+        }
+    };
 
     emit_progress(app, track_id, &full_title, 100.0, "complete");
 
@@ -564,6 +556,66 @@ fn parse_u32_from_value(val: &Value) -> Option<u32> {
     val.as_str()
         .and_then(|s| s.parse().ok())
         .or_else(|| val.as_u64().map(|n| n as u32))
+}
+
+fn create_temp_download_file(
+    download_path: &Path,
+    track_id: &str,
+) -> Result<(PathBuf, std::fs::File), String> {
+    let parent = download_path
+        .parent()
+        .ok_or("Cannot determine download directory")?;
+    let file_name = download_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download");
+    let safe_track_id = sanitize_path_component(track_id);
+
+    for counter in 0..1000 {
+        let temp_name = format!(
+            "{}.{}.{}{}",
+            file_name, safe_track_id, counter, IN_PROGRESS_SUFFIX
+        );
+        let temp_path = parent.join(temp_name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Cannot create temporary file: {}", e)),
+        }
+    }
+
+    Err("Too many temporary files for this track".to_string())
+}
+
+fn finalize_download_file(
+    temp_path: &Path,
+    preferred_path: &Path,
+    download_dir: &Path,
+    base_stem: &str,
+    ext: &str,
+) -> Result<PathBuf, String> {
+    for counter in 0..1000 {
+        let candidate = if counter == 0 {
+            preferred_path.to_path_buf()
+        } else {
+            download_dir.join(format!("{} ({}){}", base_stem, counter, ext))
+        };
+
+        match std::fs::hard_link(temp_path, &candidate) {
+            Ok(()) => {
+                cleanup_temp_file(temp_path);
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("Failed to finalize download file: {}", e)),
+        }
+    }
+
+    Err("Too many files with the same name".to_string())
 }
 
 fn cleanup_temp_file(path: &Path) {
