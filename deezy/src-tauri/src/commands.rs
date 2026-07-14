@@ -207,9 +207,27 @@ pub async fn download_track(
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
         let mut cancellation_map = state.download_cancellations.lock().await;
+        if cancellation_map.contains_key(&trackId) {
+            return Err("This track is already downloading".to_string());
+        }
         cancellation_map.insert(trackId.clone(), cancel_flag.clone());
     }
 
+    let result = execute_download_track(&trackId, &state, &app, cancel_flag).await;
+
+    // Always remove the registration, including authentication and refresh
+    // failures that return before the streaming download begins.
+    state.download_cancellations.lock().await.remove(&trackId);
+
+    result
+}
+
+async fn execute_download_track(
+    track_id: &str,
+    state: &AppState,
+    app: &AppHandle,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<DownloadResult, String> {
     // Get or recreate the client
     let (mut client, output_dir, quality, folder_structure, custom_folder_template, arl) = {
         let lock = state.client.lock().await;
@@ -257,12 +275,12 @@ pub async fn download_track(
 
     let mut result = download::download_track(
         &client,
-        &trackId,
+        track_id,
         &output_dir,
         &effective_quality,
         &folder_structure,
         &custom_folder_template,
-        &app,
+        app,
         cancel_flag.clone(),
     )
     .await;
@@ -287,12 +305,12 @@ pub async fn download_track(
 
                     result = download::download_track(
                         &client,
-                        &trackId,
+                        track_id,
                         &output_dir,
                         &retry_quality,
                         &folder_structure,
                         &custom_folder_template,
-                        &app,
+                        app,
                         cancel_flag.clone(),
                     )
                     .await;
@@ -302,11 +320,6 @@ pub async fn download_track(
                 }
             }
         }
-    }
-
-    {
-        let mut cancellation_map = state.download_cancellations.lock().await;
-        cancellation_map.remove(&trackId);
     }
 
     result
