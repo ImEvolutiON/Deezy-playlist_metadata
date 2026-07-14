@@ -35,6 +35,11 @@ pub async fn load_download_history(app: AppHandle) -> Result<Vec<serde_json::Val
 }
 
 #[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 pub async fn login(
     arl: String,
     state: tauri::State<'_, AppState>,

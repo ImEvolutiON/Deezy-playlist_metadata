@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use tokio::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub client: Arc<Mutex<Option<deezer::DeezerClient>>>,
@@ -41,7 +41,7 @@ pub fn run() {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         // Get settings to check if close_to_tray is enabled.
                         // Use try_lock to avoid blocking the main thread; if the
-                        // lock is contended, fall through and allow the close.
+                        // lock is contended, treat this as a full exit request.
                         let app_handle = window_clone.app_handle();
                         let state: tauri::State<AppState> = app_handle.state();
                         
@@ -54,6 +54,11 @@ pub fn run() {
                             // Hide window instead of closing
                             let _ = window_clone.hide();
                             api.prevent_close();
+                        } else {
+                            // Keep the renderer alive long enough to flush its
+                            // pending debounced download-history save.
+                            api.prevent_close();
+                            let _ = app_handle.emit("app-exit-requested", ());
                         }
                     }
                 });
@@ -79,6 +84,7 @@ pub fn run() {
             commands::pick_folder,
             commands::save_download_history,
             commands::load_download_history,
+            commands::exit_app,
             commands::export_download_history,
             commands::add_search_history,
             commands::get_search_history,

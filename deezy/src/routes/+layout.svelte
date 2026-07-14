@@ -99,7 +99,11 @@
   }
   
   let unlistenProgress: UnlistenFn | undefined;
+  let unlistenExitRequested: UnlistenFn | undefined;
   let saveHistoryTimeout: ReturnType<typeof setTimeout> | undefined;
+  let pendingHistory: DownloadItem[] | undefined;
+  let historySavePromise: Promise<void> | undefined;
+  let exitInProgress = false;
   let mediaQuery: MediaQueryList | undefined;
   let systemThemeChangeHandler: (() => void) | undefined;
 
@@ -162,17 +166,58 @@
     }
   }
 
+  async function persistPendingDownloadHistory(): Promise<void> {
+    while (pendingHistory) {
+      const history = pendingHistory;
+      pendingHistory = undefined;
+      const toSave = history.filter(item => item.status !== 'downloading');
+
+      try {
+        await invoke('save_download_history', { history: toSave });
+      } catch (err) {
+        console.error('Failed to save download history:', err);
+      }
+    }
+  }
+
+  function startHistorySave(): Promise<void> {
+    if (!historySavePromise) {
+      historySavePromise = persistPendingDownloadHistory().finally(() => {
+        historySavePromise = undefined;
+      });
+    }
+
+    return historySavePromise;
+  }
+
   function saveDownloadHistory(history: DownloadItem[]): void {
+    pendingHistory = history;
+
     if (saveHistoryTimeout) {
       clearTimeout(saveHistoryTimeout);
     }
-    
+
     saveHistoryTimeout = setTimeout(() => {
-      const toSave = history.filter(item => item.status !== 'downloading');
-      invoke('save_download_history', { history: toSave }).catch(err =>
-        console.error('Failed to save download history:', err)
-      );
+      saveHistoryTimeout = undefined;
+      void startHistorySave();
     }, HISTORY_SAVE_DELAY);
+  }
+
+  async function flushDownloadHistory(): Promise<void> {
+    if (saveHistoryTimeout) {
+      clearTimeout(saveHistoryTimeout);
+      saveHistoryTimeout = undefined;
+    }
+
+    await startHistorySave();
+  }
+
+  async function handleExitRequested(): Promise<void> {
+    if (exitInProgress) return;
+    exitInProgress = true;
+
+    await flushDownloadHistory();
+    await invoke('exit_app');
   }
 
   function handleDownloadProgress(event: DownloadProgressEvent): void {
@@ -213,6 +258,13 @@
     let unsubscribeHistory = () => {};
 
     void (async () => {
+      unlistenExitRequested = await listen('app-exit-requested', () => {
+        void handleExitRequested().catch(err => {
+          exitInProgress = false;
+          console.error('Failed to exit cleanly:', err);
+        });
+      });
+
       await initializeApp();
       
       await trayManager.init().catch(err => {
@@ -242,6 +294,7 @@
 
     return () => {
       unlistenProgress?.();
+      unlistenExitRequested?.();
       unsubscribeHistory();
       unsubscribeTheme();
       unsubscribeLocale();

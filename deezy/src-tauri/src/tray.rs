@@ -76,7 +76,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = app.emit("tray-pause-resume", ());
                 }
                 "quit" => {
-                    app.exit(0);
+                    let _ = app.emit("app-exit-requested", ());
                 }
                 _ => {}
             }
