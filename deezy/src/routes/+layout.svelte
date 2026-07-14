@@ -3,12 +3,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { 
-    loggedIn, 
-    userInfo, 
-    downloads, 
-    activeDownloads, 
-    downloadHistory, 
+  import {
+    loggedIn,
+    userInfo,
+    downloads,
+    downloadHistory,
     theme, 
     currentLocale, 
     type UserInfo, 
@@ -181,8 +180,6 @@
     
     downloads.update(d => {
       d.set(track_id, status);
-      const active = Array.from(d.values()).filter(s => s === 'downloading').length;
-      activeDownloads.set(active);
       return d;
     });
 
