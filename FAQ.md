@@ -6,26 +6,31 @@ Current release: **v0.2.19** (see [Changelog](CHANGELOG.md)).
 
 ## 🔒 Security & Privacy
 
-### Is Deezy stealing my ARL token?
+### How does Deezy handle my ARL token?
 
-No. Here's exactly what happens with your ARL:
+Your ARL is a sensitive session credential that can provide access to your Deezer account.
 
-- **Stored locally** — Your ARL is saved in your OS credential store (Windows Credential Manager / macOS Keychain / Linux Secret Service), the same place your browser saves passwords. It is never written to a plaintext file.
-- **Never sent anywhere except Deezer** — The ARL is only used to authenticate directly with `deezer.com`. There is no backend server, no telemetry, and no third-party endpoint that ever receives it.
-- **Never exposed to the UI** — The ARL is redacted before it's ever sent to the frontend. Only the Rust backend handles the raw token.
-- **HTTPS-only** — All connections enforce TLS 1.2+ so traffic can't be intercepted in transit.
-- **Fully open source** — Every line of code is public on GitHub. You can audit exactly what the app does with your token:
+- **Stored in the OS credential store** — Deezy stores the ARL using Windows Credential Manager, macOS Keychain, or Linux Secret Service.
+- **Excluded from `settings.json`** — Current versions remove the ARL before writing settings to disk. Legacy settings containing an ARL are migrated to the credential store.
+- **Not returned with settings** — After saving, `get_settings` returns an empty ARL field so the stored credential is not exposed to the renderer again.
+- **Temporarily handled by the frontend** — When you paste an ARL, it exists in the application's frontend memory and is sent to the Rust backend through local Tauri IPC for authentication and storage.
+- **Used only for Deezer authentication** — The current source sends authenticated requests to Deezer endpoints. It does not send the ARL to an application-operated server or analytics provider.
+- **Encrypted network connections** — Deezy's backend HTTP client accepts HTTPS URLs only and requires TLS 1.2 or newer.
+- **Open source** — You can audit the relevant implementation:
   - Token storage → `src-tauri/src/settings.rs`
-  - API calls → `src-tauri/src/deezer/mod.rs`
-  - Frontend redaction → `src-tauri/src/commands.rs`
+  - Login handling → `src-tauri/src/commands/account.rs`
+  - Settings redaction → `src-tauri/src/commands/settings.rs`
+  - Deezer requests → `src-tauri/src/deezer/`
 
-### Does Deezy collect any data or analytics?
+### Does Deezy collect analytics or telemetry?
 
-No. Deezy has no backend server, no analytics, no crash reporting, and no telemetry of any kind. Everything runs locally on your machine.
+The current source contains no analytics, telemetry, crash-reporting service, or Deezy-operated backend. Deezy still communicates with Deezer and its content-delivery endpoints to authenticate, search, preview, and download content.
 
 ### Is it safe to use my Deezer account?
 
-You use your own ARL token from your own browser session. Deezy never asks for your Deezer username or password. The risk profile is the same as being logged into Deezer in your browser.
+Deezy never asks for your Deezer password, but an ARL is effectively a session credential and should be protected like a password.
+
+Using automated download software is not equivalent to normal browser use. It may violate Deezer's terms of service, and unusual download activity could result in account restrictions or suspension. Use Deezy at your own risk.
 
 ---
 
@@ -33,26 +38,48 @@ You use your own ARL token from your own browser session. Deezy never asks for y
 
 ### What quality can I download in?
 
-| Account Type | Available Qualities |
+| Account type | Available qualities |
 |---|---|
 | Free | MP3 128 kbps |
 | Premium | MP3 128 kbps, MP3 320 kbps, FLAC |
 
+Free accounts are automatically limited to MP3 128 kbps, regardless of the quality selected in Settings. Availability can also vary by track and region.
+
 ### Why did my download fall back to a lower quality?
 
-Not all tracks are available in every quality on Deezer's servers. Deezy automatically falls back through the chain: **FLAC → MP3 320 → MP3 128**. The download history shows both the requested and actual quality when a fallback occurs.
+Not every track is available in every quality. Deezy tries the selected quality first, then falls back in this order:
+
+**FLAC → MP3 320 kbps → MP3 128 kbps**
+
+For MP3 320 kbps, the fallback is MP3 128 kbps. Completed downloads show both the requested and actual quality when a fallback occurs.
 
 ### Where are my downloaded files saved?
 
-In the folder you chose in Settings. You can also configure the folder structure (Flat, Artist/Track, Artist/Album/Track, or Album/Track).
+Downloads are saved in the folder selected in Settings. You can organize them using one of these folder structures:
+
+- Flat
+- Artist/Track
+- Artist/Album/Track
+- Album/Track
+- Custom template
+
+Custom templates support `{artist}`, `{album}`, `{title}`, `{track_number}`, `{disc_number}`, `{release_date}`, and `{release_year}`. The aliases `{track}`, `{disc}`, and `{year}` are also supported. Use `/` or `\` to create folders.
 
 ### Can I download entire albums or playlists?
 
-Yes. Click **Download All** on any album or playlist to queue all tracks at once.
+Yes. Click **Download All** on an album or playlist to add all its available tracks to the download queue. Deezy runs up to three downloads concurrently.
 
 ### Can I paste a Deezer link to download?
 
-Yes. In the Search view, use the **Deezer URL** input to paste track, album, artist, or playlist links (e.g. `https://www.deezer.com/track/123456`). Deezy parses the URL and lets you download or queue the content directly without searching.
+Yes. The **Deezer URL** field in Search accepts `deezer.com` track, album, playlist, and artist links, such as `https://www.deezer.com/track/123456`.
+
+Submitting a link adds its content to the download queue:
+
+- Track links add one track.
+- Album and playlist links add all returned tracks.
+- Artist links add tracks from every album returned for that artist.
+
+Large albums, playlists, or artist discographies may add many tracks to the queue. Deezer short links and links from other domains are not currently supported.
 
 ---
 
@@ -60,36 +87,49 @@ Yes. In the Search view, use the **Deezer URL** input to paste track, album, art
 
 ### How do I get my ARL token?
 
-1. Log into [deezer.com](https://www.deezer.com) in your browser
-2. Open DevTools (`F12`) → **Application** (Chrome) or **Storage** (Firefox) → **Cookies** → `https://www.deezer.com`
-3. Copy the value of the `arl` cookie (192-character string)
-4. Paste it into Deezy's Settings and click **Save & Login**
+1. Log into [deezer.com](https://www.deezer.com) in your browser.
+2. Open DevTools (`F12`) and select **Application** in Chromium-based browsers or **Storage** in Firefox.
+3. Open **Cookies** → `https://www.deezer.com`.
+4. Copy the complete value of the `arl` cookie.
+5. Paste it into Deezy's Settings and click **Save & Login**.
 
-### My ARL token expired. What do I do?
+Treat the ARL like a password. Do not share it, post it in screenshots, or include it in bug reports.
 
-ARL tokens expire periodically. Just log into Deezer in your browser, grab the new `arl` cookie value, and paste it into Deezy's Settings again.
+### My ARL token expired or stopped working. What do I do?
+
+Log into Deezer in your browser again, copy the current `arl` cookie, and save it in Deezy's Settings. Deezy automatically retries a download once when it detects an expired session; if that retry fails, you must update the ARL and log in again.
 
 ### The app shows a blank/black screen on startup. What do I do?
 
-This is usually a first-launch timing issue. Try closing and reopening the app. If it persists, delete the app data folder and re-enter your settings:
+First, fully exit Deezy from the system tray and reopen it. If the problem continues, install the latest release again.
+
+As a last resort, close Deezy and rename its application-data folder so the app can create a clean configuration:
+
 - **Windows:** `%APPDATA%\com.pierr.deezy`
 - **macOS:** `~/Library/Application Support/com.pierr.deezy`
-- **Linux:** `~/.local/share/com.pierr.deezy`
+- **Linux:** `$XDG_DATA_HOME/com.pierr.deezy` or `~/.local/share/com.pierr.deezy`
+
+Resetting this folder removes local settings, download history, and custom themes. The ARL is stored separately in the OS credential store and may remain there.
 
 ### Downloads are stalling or not starting. What do I do?
 
-- Check that your ARL token is still valid (try logging into deezer.com)
-- Check your internet connection
-- Restart the app — the download queue state is restored on relaunch
-- If a specific track keeps failing, it may not be available in the requested quality or region
+- Confirm that your internet connection is working.
+- Open Settings and save a current ARL to verify that Deezer authentication succeeds.
+- Try the same track at MP3 128 kbps in case higher-quality media is unavailable.
+- Pause and resume the download, or retry it from the download history after an error.
+- Fully exit Deezy from the tray before restarting it.
 
-### Album covers or audio previews don't load in the installed app but work in dev mode.
+The download history is persisted, but queued and active downloads are not restored after the application exits. Restarting therefore clears the current queue. A track can also be unavailable because of catalog or regional restrictions.
 
-This was a known CSP issue fixed in **v0.2.8**. Make sure you're on the latest version.
+### Album covers or audio previews do not load.
+
+Make sure you are running the latest release and that your network, DNS filter, firewall, or proxy allows HTTPS access to `api.deezer.com` and `*.dzcdn.net`. A Content Security Policy issue affecting installed builds was fixed in **v0.2.8**.
 
 ### A Deezer URL shows "Track not found" or doesn't work.
 
-Ensure the URL is a valid Deezer link (track, album, artist, or playlist). Supported formats include `deezer.com/track/...`, `deezer.com/album/...`, `deezer.com/artist/...`, and `deezer.com/playlist/...`. If the track exists but still fails, your ARL token may have expired—refresh it from your browser and update Settings.
+Use a full `http://` or `https://` URL from `deezer.com` with a numeric track, album, artist, or playlist ID. Supported paths include `deezer.com/track/...`, `deezer.com/album/...`, `deezer.com/artist/...`, and `deezer.com/playlist/...`, optionally with a locale segment such as `/en/`.
+
+Short-link domains are not supported. If a valid full URL still fails, update your ARL and check whether the content is available to your account and region.
 
 ---
 
@@ -97,25 +137,27 @@ Ensure the URL is a valid Deezer link (track, album, artist, or playlist). Suppo
 
 ### How do I update Deezy on Windows?
 
-Open Settings (Ctrl+3) and click **Check for Updates**. If a new version is available, click **Download & Install** — the app will update and relaunch automatically.
+Deezy `v0.2.19` does not include an automatic updater. Download the latest `.exe` or `.msi` from the [GitHub Releases page](https://github.com/PierrunoYT/Deezy/releases/latest), fully exit Deezy from the system tray, and run the installer.
+
+Installing a newer version over the existing installation should preserve settings and download history, but keeping a backup of important data is recommended.
 
 ### How do I update Deezy on macOS or Linux?
 
-Auto-updates are currently only available on Windows. If you built the app from source on macOS or Linux, update manually by pulling the latest code and rebuilding:
+Prebuilt macOS and Linux packages are not currently published. If you built Deezy from source, update the repository and rebuild it:
 
 ```bash
-cd DeezyTauri
+cd Deezy
 git pull
 cd deezy
-npm install
-npm run tauri build
+bun install
+bun run tauri build
 ```
 
-Then install the new bundle from `src-tauri/target/release/bundle/`.
+Install the new bundle from `src-tauri/target/release/bundle/`. You can use the equivalent `npm` commands if Bun is unavailable.
 
-### Why does "Check for Updates" say no update is available on macOS/Linux?
+### Does Deezy check for updates automatically?
 
-The update server currently only serves Windows builds. macOS and Linux users need to rebuild from source as described above.
+No. Check the [GitHub Releases page](https://github.com/PierrunoYT/Deezy/releases/latest) for new versions.
 
 ---
 
@@ -123,11 +165,13 @@ The update server currently only serves Windows builds. macOS and Linux users ne
 
 ### Is Deezy legal to use?
 
-Deezy is provided for **educational and personal use only**. Downloading music from Deezer may violate their [Terms of Service](https://www.deezer.com/legal/cgu). You are responsible for how you use the software and for complying with copyright laws in your jurisdiction. Downloaded content should not be redistributed or used commercially.
+Deezy is provided for educational and personal use, but that does not make every use lawful. Downloading or extracting music may violate [Deezer's Terms of Service](https://www.deezer.com/legal/cgu), copyright law, or both. A Deezer subscription does not automatically grant permission to copy or redistribute recordings.
+
+Laws differ by jurisdiction. You are responsible for determining whether your use is permitted and for obtaining any necessary authorization. This FAQ is not legal advice. Do not redistribute downloaded content or use it commercially without the rights holders' permission.
 
 ### Does Deezy support the artists?
 
-Using Deezy does not generate royalty payments to artists. If you enjoy an artist's music, consider streaming it on Deezer, buying their music, or attending their shows.
+Do not assume that downloading through Deezy compensates artists or other rights holders. Support them through authorized streams, purchases, merchandise, or live events.
 
 ---
 

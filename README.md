@@ -30,21 +30,21 @@ A modern desktop Deezer downloader. Search for tracks, albums, artists, and play
 ## Features
 
 - **Search** – Find tracks, albums, artists, and playlists with debounced search
-- **URL download** – Paste any Deezer link to download or queue it directly
+- **URL download** – Paste full `deezer.com` track, album, artist, or playlist URLs to add their content to the queue
 - **Audio preview** – Play 30-second previews before downloading
 - **Smart queue** – Up to 3 concurrent downloads with drag-and-drop reordering, pause/resume, and retry
 - **Album & playlist download** – Download all tracks with one click
 - **Quality options** – MP3 128, MP3 320, or FLAC with automatic fallback
 - **Full metadata** – Title, artist, album, year, track number, genre, and 1000×1000 cover art embedded
-- **Folder structure** – Organize downloads in 4 layouts: Flat, Artist/Track, Artist/Album/Track, Album/Track
+- **Folder structure** – Organize downloads as Flat, Artist/Track, Artist/Album/Track, Album/Track, or with a custom template
 - **Tag editor** – Edit metadata and cover art on any local MP3 or FLAC file
 - **Download history** – Persistent history with CSV/JSON export and open-in-file-manager
 - **Themes** – Light, Dark, System, and fully custom JSON themes
 - **Internationalization** – English, Spanish, French, German, Portuguese, and Italian
 - **Keyboard shortcuts** – Ctrl+F, Ctrl+1/2/3, Ctrl+H, Space, Shift+? and more
 - **System tray** – Minimize to tray with download status and quick controls
-- **Auto-update** – Check for and install updates directly from Settings
-- **Secure credentials** – ARL token stored in OS credential store, never in plaintext
+- **Manual updates** – Install Windows releases from GitHub or rebuild from source on macOS and Linux
+- **Secure credentials** – ARL token stored in the OS credential store and excluded from `settings.json`
 
 ---
 
@@ -70,7 +70,7 @@ npm run tauri build
 
 Install the output from `src-tauri/target/release/bundle/` (`.dmg` on macOS, `.deb` / `.AppImage` on Linux).
 
-> **macOS note:** Auto-update is not available — updates require rebuilding from source. Run `git pull` then `npm run tauri build` to update.
+> **Update note:** Deezy does not currently include an automatic updater. Pull the latest source and run `npm run tauri build` again to update a source-built installation.
 
 ---
 
@@ -78,9 +78,9 @@ Install the output from `src-tauri/target/release/bundle/` (`.dmg` on macOS, `.d
 
 1. Log into [deezer.com](https://www.deezer.com)
 2. Open DevTools (`F12`) → **Application** (Chrome) or **Storage** (Firefox) → **Cookies** → `https://www.deezer.com`
-3. Copy the value of the `arl` cookie (192-character string)
+3. Copy the complete value of the `arl` cookie
 
-> Your ARL token is stored securely in your OS credential store (Windows Credential Manager / macOS Keychain / Linux Secret Service). It expires periodically and will need to be updated.
+> Treat the ARL like a password. Deezy stores it in Windows Credential Manager, macOS Keychain, or Linux Secret Service and excludes it from `settings.json`. It can expire or be invalidated and may need to be updated.
 
 ---
 
@@ -88,13 +88,13 @@ Install the output from `src-tauri/target/release/bundle/` (`.dmg` on macOS, `.d
 
 1. **Setup** – Paste your ARL token, choose a download folder and quality, then click **Save & Login**
 2. **Search** – Switch to Search (Ctrl+1), type a query, and press Enter
-3. **Paste URLs** – Paste Deezer track, album, artist, or playlist links to download directly
+3. **Paste URLs** – Paste a full `deezer.com` track, album, artist, or playlist URL to add its content to the queue
 4. **Preview** – Click ▶ to preview a track; Space bar to play/pause
 5. **Download** – Click the download button on a track, or **Download All** on an album or playlist
 6. **Manage Queue** – Drag to reorder, pause/resume, or remove pending downloads (Ctrl+2)
 7. **History** – View completed downloads, open files in Explorer/Finder, or export history
 8. **Customize** – Change theme, language, folder structure, and notifications in Settings (Ctrl+3)
-9. **Updates** – Click **Check for Updates** in Settings to install the latest version
+9. **Updates** – Download the latest Windows installer from GitHub Releases, or pull and rebuild on macOS and Linux
 10. **Tray** – Minimize to tray (Ctrl+H); double-click the icon to restore
 
 ---
