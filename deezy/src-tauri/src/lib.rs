@@ -13,6 +13,7 @@ use tauri::{Emitter, Manager};
 pub struct AppState {
     pub client: Arc<Mutex<Option<deezer::DeezerClient>>>,
     pub settings: Arc<Mutex<settings::Settings>>,
+    pub settings_io: Arc<Mutex<()>>,
     pub tray_state: tray::TrayState,
     pub download_cancellations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
@@ -25,6 +26,7 @@ pub fn run() {
         .manage(AppState {
             client: Arc::new(Mutex::new(None)),
             settings: Arc::new(Mutex::new(settings::Settings::default())),
+            settings_io: Arc::new(Mutex::new(())),
             tray_state: tray::TrayState::new(),
             download_cancellations: Arc::new(Mutex::new(HashMap::new())),
         })

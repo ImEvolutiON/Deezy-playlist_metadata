@@ -7,6 +7,7 @@ use futures::StreamExt;
 use id3::TagLike;
 use serde_json::Value;
 use tauri::Emitter;
+use tokio::io::AsyncWriteExt;
 
 use super::models::DownloadProgress;
 use super::models::DownloadResult;
@@ -81,7 +82,9 @@ pub async fn download_track(
         .ok_or("Cannot determine download directory")?
         .to_path_buf();
 
-    std::fs::create_dir_all(&download_dir).map_err(|e| e.to_string())?;
+    tokio::fs::create_dir_all(&download_dir)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let base_stem = download_path
         .file_stem()
@@ -115,7 +118,8 @@ pub async fn download_track(
     // Atomically reserve a unique temporary file. Different tracks can resolve
     // to the same display filename, so deriving the temp path only from the
     // destination would let concurrent downloads truncate each other's data.
-    let (temp_download_path, mut file) = create_temp_download_file(&download_path, track_id)?;
+    let (temp_download_path, file) = create_temp_download_file(&download_path, track_id).await?;
+    let mut file = tokio::io::BufWriter::new(file);
     let mut stream = response.bytes_stream();
     let mut buffer: Vec<u8> = Vec::new();
     let mut chunk_index = 0u64;
@@ -123,7 +127,8 @@ pub async fn download_track(
 
     while let Some(item) = stream.next().await {
         if cancel_flag.load(Ordering::Relaxed) {
-            cleanup_temp_file(&temp_download_path);
+            drop(file);
+            cleanup_temp_file_async(&temp_download_path).await;
             return Ok(DownloadResult {
                 file_path: String::new(),
                 requested_quality: quality.to_string(),
@@ -135,7 +140,8 @@ pub async fn download_track(
         let bytes = match item {
             Ok(bytes) => bytes,
             Err(e) => {
-                cleanup_temp_file(&temp_download_path);
+                drop(file);
+                cleanup_temp_file_async(&temp_download_path).await;
                 return Err(format!("Stream error: {}", e));
             }
         };
@@ -143,7 +149,8 @@ pub async fn download_track(
 
         while buffer.len() >= 2048 {
             if cancel_flag.load(Ordering::Relaxed) {
-                cleanup_temp_file(&temp_download_path);
+                drop(file);
+                cleanup_temp_file_async(&temp_download_path).await;
                 return Ok(DownloadResult {
                     file_path: String::new(),
                     requested_quality: quality.to_string(),
@@ -154,22 +161,29 @@ pub async fn download_track(
 
             let chunk: Vec<u8> = buffer.drain(..2048).collect();
             if downloaded.saturating_add(chunk.len() as u64) > MAX_TRACK_DOWNLOAD_BYTES {
-                cleanup_temp_file(&temp_download_path);
+                drop(file);
+                cleanup_temp_file_async(&temp_download_path).await;
                 return Err("Download aborted: file exceeds allowed size limit".to_string());
             }
 
             if chunk_index.is_multiple_of(3) {
-                let decrypted = crypto::decrypt_blowfish_chunk(&chunk, &bf_key)
-                    .map_err(|e| format!("Decryption failed: {}", e))?;
-                if let Err(e) = file.write_all(&decrypted) {
-                    cleanup_temp_file(&temp_download_path);
+                let decrypted = match crypto::decrypt_blowfish_chunk(&chunk, &bf_key) {
+                    Ok(decrypted) => decrypted,
+                    Err(e) => {
+                        drop(file);
+                        cleanup_temp_file_async(&temp_download_path).await;
+                        return Err(format!("Decryption failed: {}", e));
+                    }
+                };
+                if let Err(e) = file.write_all(&decrypted).await {
+                    drop(file);
+                    cleanup_temp_file_async(&temp_download_path).await;
                     return Err(e.to_string());
                 }
-            } else {
-                if let Err(e) = file.write_all(&chunk) {
-                    cleanup_temp_file(&temp_download_path);
-                    return Err(e.to_string());
-                }
+            } else if let Err(e) = file.write_all(&chunk).await {
+                drop(file);
+                cleanup_temp_file_async(&temp_download_path).await;
+                return Err(e.to_string());
             }
 
             chunk_index += 1;
@@ -187,7 +201,8 @@ pub async fn download_track(
     // so they are always written as-is.
     if !buffer.is_empty() {
         if cancel_flag.load(Ordering::Relaxed) {
-            cleanup_temp_file(&temp_download_path);
+            drop(file);
+            cleanup_temp_file_async(&temp_download_path).await;
             return Ok(DownloadResult {
                 file_path: String::new(),
                 requested_quality: quality.to_string(),
@@ -197,13 +212,20 @@ pub async fn download_track(
         }
 
         if downloaded.saturating_add(buffer.len() as u64) > MAX_TRACK_DOWNLOAD_BYTES {
-            cleanup_temp_file(&temp_download_path);
+            drop(file);
+            cleanup_temp_file_async(&temp_download_path).await;
             return Err("Download aborted: file exceeds allowed size limit".to_string());
         }
-        if let Err(e) = file.write_all(&buffer) {
-            cleanup_temp_file(&temp_download_path);
+        if let Err(e) = file.write_all(&buffer).await {
+            drop(file);
+            cleanup_temp_file_async(&temp_download_path).await;
             return Err(e.to_string());
         }
+    }
+    if let Err(e) = file.flush().await {
+        drop(file);
+        cleanup_temp_file_async(&temp_download_path).await;
+        return Err(e.to_string());
     }
     drop(file);
 
@@ -229,7 +251,7 @@ pub async fn download_track(
     }
 
     if cancel_flag.load(Ordering::Relaxed) {
-        cleanup_temp_file(&temp_download_path);
+        cleanup_temp_file_async(&temp_download_path).await;
         return Ok(DownloadResult {
             file_path: String::new(),
             requested_quality: quality.to_string(),
@@ -240,16 +262,32 @@ pub async fn download_track(
 
     // Hard-linking is an atomic no-overwrite operation. If another concurrent
     // download claimed the preferred name first, retry with a numbered name.
-    let download_path = match finalize_download_file(
-        &temp_download_path,
-        &download_path,
-        &download_dir,
-        &base_stem,
-        ext,
-    ) {
+    let finalize_temp_path = temp_download_path.clone();
+    let preferred_path = download_path.clone();
+    let finalize_dir = download_dir.clone();
+    let finalize_stem = base_stem.clone();
+    let finalize_ext = ext.to_string();
+    let finalize_task = tokio::task::spawn_blocking(move || {
+        finalize_download_file(
+            &finalize_temp_path,
+            &preferred_path,
+            &finalize_dir,
+            &finalize_stem,
+            &finalize_ext,
+        )
+    });
+    let finalize_result = match finalize_task.await {
+        Ok(result) => result,
+        Err(e) => {
+            cleanup_temp_file_async(&temp_download_path).await;
+            return Err(format!("File finalization task failed: {}", e));
+        }
+    };
+
+    let download_path = match finalize_result {
         Ok(path) => path,
         Err(e) => {
-            cleanup_temp_file(&temp_download_path);
+            cleanup_temp_file_async(&temp_download_path).await;
             return Err(e);
         }
     };
@@ -339,8 +377,13 @@ async fn write_mp3_tags(
         }
     }
 
-    tag.write_to_path(path, id3::Version::Id3v24)
-        .map_err(|e| format!("Tag write error: {}", e))?;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        tag.write_to_path(path, id3::Version::Id3v24)
+            .map_err(|e| format!("Tag write error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("MP3 tagging task failed: {}", e))??;
 
     Ok(())
 }
@@ -354,8 +397,12 @@ async fn write_flac_tags(
     client: &DeezerClient,
     album_id: &str,
 ) -> Result<(), String> {
-    let mut tag =
-        metaflac::Tag::read_from_path(path).map_err(|e| format!("FLAC read error: {}", e))?;
+    let read_path = path.to_path_buf();
+    let mut tag = tokio::task::spawn_blocking(move || {
+        metaflac::Tag::read_from_path(read_path).map_err(|e| format!("FLAC read error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("FLAC tagging task failed: {}", e))??;
 
     tag.set_vorbis("TITLE", vec![title]);
     tag.set_vorbis("ARTIST", vec![artist]);
@@ -412,8 +459,13 @@ async fn write_flac_tags(
         }
     }
 
-    tag.write_to_path(path)
-        .map_err(|e| format!("FLAC tag write error: {}", e))?;
+    let write_path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        tag.write_to_path(write_path)
+            .map_err(|e| format!("FLAC tag write error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("FLAC tagging task failed: {}", e))??;
 
     Ok(())
 }
@@ -558,10 +610,10 @@ fn parse_u32_from_value(val: &Value) -> Option<u32> {
         .or_else(|| val.as_u64().map(|n| n as u32))
 }
 
-fn create_temp_download_file(
+async fn create_temp_download_file(
     download_path: &Path,
     track_id: &str,
-) -> Result<(PathBuf, std::fs::File), String> {
+) -> Result<(PathBuf, tokio::fs::File), String> {
     let parent = download_path
         .parent()
         .ok_or("Cannot determine download directory")?;
@@ -577,10 +629,11 @@ fn create_temp_download_file(
             file_name, safe_track_id, counter, IN_PROGRESS_SUFFIX
         );
         let temp_path = parent.join(temp_name);
-        match std::fs::OpenOptions::new()
+        match tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temp_path)
+            .await
         {
             Ok(file) => return Ok((temp_path, file)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
@@ -653,6 +706,10 @@ fn copy_file_noclobber(source_path: &Path, destination_path: &Path) -> io::Resul
 
 fn cleanup_temp_file(path: &Path) {
     let _ = std::fs::remove_file(path);
+}
+
+async fn cleanup_temp_file_async(path: &Path) {
+    let _ = tokio::fs::remove_file(path).await;
 }
 
 #[cfg(test)]

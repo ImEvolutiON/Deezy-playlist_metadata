@@ -13,25 +13,39 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use url::Url;
 
+async fn run_blocking<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|e| format!("Blocking task failed: {}", e))?
+}
+
 #[tauri::command]
 pub async fn save_download_history(history: Vec<serde_json::Value>, app: AppHandle) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("download_history.json");
-    let data = serde_json::to_string_pretty(&history).map_err(|e| e.to_string())?;
-    std::fs::write(&path, data).map_err(|e| e.to_string())
+    run_blocking(move || {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("download_history.json");
+        let data = serde_json::to_string_pretty(&history).map_err(|e| e.to_string())?;
+        std::fs::write(&path, data).map_err(|e| e.to_string())
+    }).await
 }
 
 #[tauri::command]
 pub async fn load_download_history(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = dir.join("download_history.json");
-    if path.exists() {
-        let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&data).map_err(|e| e.to_string())
-    } else {
-        Ok(vec![])
-    }
+    run_blocking(move || {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let path = dir.join("download_history.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            serde_json::from_str(&data).map_err(|e| e.to_string())
+        } else {
+            Ok(vec![])
+        }
+    }).await
 }
 
 #[tauri::command]
@@ -50,11 +64,12 @@ pub async fn login(
 
     *state.client.lock().await = Some(client);
 
-    {
-        let mut settings = state.settings.lock().await;
-        settings.arl = arl;
-        settings.save(&app)?;
-    }
+    let _settings_io = state.settings_io.lock().await;
+    let mut updated_settings = state.settings.lock().await.clone();
+    updated_settings.arl = arl;
+    let settings_to_save = updated_settings.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = updated_settings;
 
     Ok(user)
 }
@@ -64,7 +79,10 @@ pub async fn auto_login(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<Option<Value>, String> {
-    let settings = Settings::load(&app)?;
+    let settings_io = state.settings_io.lock().await;
+    let settings = run_blocking(move || Settings::load(&app)).await?;
+    *state.settings.lock().await = settings.clone();
+    drop(settings_io);
     if settings.arl.trim().is_empty() {
         return Ok(None);
     }
@@ -73,7 +91,6 @@ pub async fn auto_login(
     let user = serde_json::to_value(&client.user).map_err(|e| e.to_string())?;
 
     *state.client.lock().await = Some(client);
-    *state.settings.lock().await = settings;
 
     Ok(Some(user))
 }
@@ -350,7 +367,8 @@ pub async fn get_settings(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<Settings, String> {
-    let loaded = Settings::load(&app)?;
+    let _settings_io = state.settings_io.lock().await;
+    let loaded = run_blocking(move || Settings::load(&app)).await?;
     {
         let mut settings = state.settings.lock().await;
         *settings = loaded.clone();
@@ -368,7 +386,8 @@ pub async fn save_settings(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut settings = state.settings.lock().await;
+    let _settings_io = state.settings_io.lock().await;
+    let settings = state.settings.lock().await;
     let mut merged = new_settings.clone();
 
     // Allow non-auth settings updates without exposing ARL to the renderer.
@@ -380,8 +399,10 @@ pub async fn save_settings(
         return Err("ARL token is required".to_string());
     }
 
-    merged.save(&app)?;
-    *settings = merged;
+    drop(settings);
+    let settings_to_save = merged.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = merged;
     Ok(())
 }
 
@@ -410,7 +431,8 @@ pub async fn add_search_history(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut settings = state.settings.lock().await;
+    let _settings_io = state.settings_io.lock().await;
+    let mut settings = state.settings.lock().await.clone();
     
     if !settings.enable_search_history {
         return Ok(());
@@ -437,7 +459,9 @@ pub async fn add_search_history(
         settings.search_history.truncate(20);
     }
     
-    settings.save(&app)?;
+    let settings_to_save = settings.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = settings;
     Ok(())
 }
 
@@ -454,9 +478,12 @@ pub async fn clear_search_history(
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut settings = state.settings.lock().await;
+    let _settings_io = state.settings_io.lock().await;
+    let mut settings = state.settings.lock().await.clone();
     settings.search_history.clear();
-    settings.save(&app)?;
+    let settings_to_save = settings.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = settings;
     Ok(())
 }
 
@@ -516,13 +543,15 @@ pub async fn export_download_history(
         Err(_) => return Err("Failed to get file path".to_string()),
     };
 
-    let content = if format == "csv" {
-        generate_csv(&history)?
-    } else {
-        serde_json::to_string_pretty(&history).map_err(|e| e.to_string())?
-    };
-
-    std::fs::write(&file_path, content).map_err(|e| e.to_string())?;
+    let output_path = file_path.clone();
+    run_blocking(move || {
+        let content = if format == "csv" {
+            generate_csv(&history)?
+        } else {
+            serde_json::to_string_pretty(&history).map_err(|e| e.to_string())?
+        };
+        std::fs::write(&output_path, content).map_err(|e| e.to_string())
+    }).await?;
     Ok(file_path)
 }
 
@@ -560,22 +589,22 @@ fn sanitize_csv_field(value: &str) -> String {
 
 #[tauri::command]
 pub async fn list_custom_themes(app: AppHandle) -> Result<Vec<String>, String> {
-    themes::list_custom_themes(&app)
+    run_blocking(move || themes::list_custom_themes(&app)).await
 }
 
 #[tauri::command]
 pub async fn load_custom_theme(theme_name: String, app: AppHandle) -> Result<themes::CustomTheme, String> {
-    themes::load_custom_theme(&app, &theme_name)
+    run_blocking(move || themes::load_custom_theme(&app, &theme_name)).await
 }
 
 #[tauri::command]
 pub async fn save_custom_theme(theme: themes::CustomTheme, app: AppHandle) -> Result<(), String> {
-    themes::save_custom_theme(&app, &theme)
+    run_blocking(move || themes::save_custom_theme(&app, &theme)).await
 }
 
 #[tauri::command]
 pub async fn delete_custom_theme(theme_name: String, app: AppHandle) -> Result<(), String> {
-    themes::delete_custom_theme(&app, &theme_name)
+    run_blocking(move || themes::delete_custom_theme(&app, &theme_name)).await
 }
 
 #[tauri::command]
@@ -606,18 +635,18 @@ pub async fn import_theme_file(app: AppHandle) -> Result<String, String> {
         Err(_) => return Err("Failed to get file path".to_string()),
     };
 
-    let data = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
-    let theme: themes::CustomTheme = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-    theme.validate()?;
-    
-    themes::save_custom_theme(&app, &theme)?;
-    
-    Ok(theme.name.clone())
+    run_blocking(move || {
+        let data = std::fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
+        let theme: themes::CustomTheme = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+        theme.validate()?;
+        themes::save_custom_theme(&app, &theme)?;
+        Ok(theme.name)
+    }).await
 }
 
 #[tauri::command]
 pub async fn create_example_themes(app: AppHandle) -> Result<(), String> {
-    themes::create_example_themes(&app)
+    run_blocking(move || themes::create_example_themes(&app)).await
 }
 
 #[tauri::command]
@@ -771,10 +800,14 @@ pub async fn pick_cover_image(app: AppHandle) -> Result<Option<String>, String> 
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn read_image_as_data_url(filePath: String) -> Result<String, String> {
+    run_blocking(move || read_image_as_data_url_blocking(filePath)).await
+}
+
+fn read_image_as_data_url_blocking(file_path: String) -> Result<String, String> {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as B64;
 
-    let bytes = std::fs::read(&filePath)
+    let bytes = std::fs::read(&file_path)
         .map_err(|e| format!("Failed to read image: {}", e))?;
     let mime = detect_image_mime(&bytes);
     Ok(format!("data:{};base64,{}", mime, B64.encode(&bytes)))
@@ -784,6 +817,11 @@ pub async fn read_image_as_data_url(filePath: String) -> Result<String, String> 
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn read_file_tags(filePath: String) -> Result<FileTagData, String> {
+    run_blocking(move || read_file_tags_blocking(filePath)).await
+}
+
+#[allow(non_snake_case)]
+fn read_file_tags_blocking(filePath: String) -> Result<FileTagData, String> {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as B64;
 
@@ -887,6 +925,11 @@ pub async fn read_file_tags(filePath: String) -> Result<FileTagData, String> {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn write_file_tags(filePath: String, tags: WriteTagData) -> Result<(), String> {
+    run_blocking(move || write_file_tags_blocking(filePath, tags)).await
+}
+
+#[allow(non_snake_case)]
+fn write_file_tags_blocking(filePath: String, tags: WriteTagData) -> Result<(), String> {
     let path = std::path::Path::new(&filePath);
 
     if !path.exists() {
