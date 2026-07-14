@@ -1,0 +1,658 @@
+.search-view {
+    padding: 28px 32px;
+    height: 100%;
+    overflow-y: auto;
+  
+  .search-header {
+    position: sticky;
+    top: 0;
+    background: var(--bg-dark);
+    padding-bottom: 20px;
+    z-index: 10;
+  }
+  
+  .search-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  
+  .tab-btn {
+    padding: 6px 16px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  
+  .tab-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+  
+  .tab-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  
+  .search-bar-container {
+    position: relative;
+  }
+  
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    padding: 12px 20px;
+    transition: border-color 0.2s;
+  }
+  
+  .search-bar:focus-within {
+    border-color: var(--accent);
+  }
+  
+  .search-bar svg {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+  
+  .search-bar input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 15px;
+    outline: none;
+    font-family: inherit;
+  }
+  
+  .search-bar input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .search-history-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .search-history-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .search-history-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .search-history-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .search-history-item svg {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .search-history-item span {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Artist page header */
+  .artist-page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .btn-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    align-self: flex-start;
+  }
+
+  .btn-back:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+  }
+
+  .artist-hero {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .artist-hero-img {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--bg-elevated);
+  }
+
+  .artist-hero-placeholder {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+  }
+
+  .artist-hero-name {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .artist-hero-meta {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  
+  .status-message {
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+  
+  .status-message.info {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(162, 56, 255, 0.2);
+  }
+  
+  .status-message.error {
+    background: rgba(231, 76, 60, 0.1);
+    color: var(--error);
+    border: 1px solid rgba(231, 76, 60, 0.2);
+  }
+  
+  .results-header {
+    display: grid;
+    grid-template-columns: 40px 52px 1fr 160px 80px 132px;
+    gap: 12px;
+    padding: 8px 16px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  
+  .results-header .col-title {
+    grid-column: 3;
+  }
+  
+  .results-list {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .track-item {
+    display: grid;
+    grid-template-columns: 40px 52px 1fr 160px 80px 132px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    cursor: default;
+    transition: background 0.15s;
+  }
+  
+  .track-item:hover {
+    background: var(--bg-hover);
+  }
+  
+  .btn-play-track {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+
+  .btn-play-track:hover:not(:disabled) {
+    background: var(--accent);
+    color: white;
+    transform: scale(1.1);
+  }
+
+  .btn-play-track.playing {
+    background: var(--accent);
+    color: white;
+  }
+
+  .btn-play-track:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .track-cover {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    background: var(--bg-elevated);
+  }
+  
+  .track-info {
+    overflow: hidden;
+  }
+  
+  .track-title {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .artist-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    width: 100%;
+    color: var(--text-secondary);
+    font-size: 13px;
+    transition: color 0.15s;
+  }
+
+  .artist-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  
+  .track-album {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .track-duration {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-align: right;
+  }
+
+  .track-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  
+  .btn-download {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+  }
+  
+  .btn-download:hover {
+    background: var(--accent);
+    color: white;
+    transform: scale(1.1);
+  }
+  
+  .btn-download.downloading {
+    color: var(--accent);
+    animation: pulse 1.5s infinite;
+  }
+  
+  .btn-download.done {
+    color: var(--success);
+  }
+  
+  .album-item {
+    display: grid;
+    grid-template-columns: 72px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    cursor: default;
+    transition: background 0.15s;
+  }
+  
+  .album-item:hover {
+    background: var(--bg-hover);
+  }
+  
+  .album-cover {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    background: var(--bg-elevated);
+  }
+  
+  .album-info {
+    overflow: hidden;
+  }
+  
+  .album-title {
+    font-size: 15px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .album-meta {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  
+  .btn-download-all {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  
+  .btn-download-all:hover:not(:disabled) {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  
+  .btn-download-all.downloading {
+    color: var(--accent);
+    border-color: var(--accent);
+    cursor: wait;
+  }
+  
+  .btn-download-all:disabled {
+    opacity: 0.7;
+  }
+
+  /* Artist search results grid */
+  .artist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px;
+    padding: 4px 0;
+  }
+
+  .artist-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 12px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    background: var(--bg-elevated);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    font-family: inherit;
+  }
+
+  .artist-card:hover {
+    background: var(--bg-hover);
+    border-color: var(--border);
+    transform: translateY(-2px);
+  }
+
+  .artist-card-img {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--bg-dark);
+  }
+
+  .artist-card-placeholder {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--bg-dark);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+  }
+
+  .artist-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+  }
+
+  .artist-card-meta {
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  .playlist-cover {
+    border-radius: var(--radius-sm);
+  }
+
+  .playlist-title-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    width: 100%;
+    transition: color 0.15s;
+  }
+
+  .playlist-title-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .album-artist {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .playlist-header-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 0 12px;
+  }
+
+  /* URL Input Styles */
+  .url-input-container {
+    margin-top: 16px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+  }
+
+  .url-input-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .url-input-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .url-input-bar input {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+
+  .url-input-bar input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(162, 56, 255, 0.1);
+  }
+
+  .url-input-bar input.url-error {
+    border-color: var(--error);
+  }
+
+  .url-input-bar input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .url-download-btn {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+
+  .url-download-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
+  .url-download-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--text-tertiary);
+    border-color: var(--text-tertiary);
+  }
+
+  .url-error {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(231, 76, 60, 0.1);
+    color: var(--error);
+    border: 1px solid rgba(231, 76, 60, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+  }
+
+  .spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top: 2px solid white;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+}

@@ -1,0 +1,127 @@
+use super::*;
+
+#[tauri::command]
+pub async fn get_settings(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<Settings, String> {
+    let _settings_io = state.settings_io.lock().await;
+    let loaded = run_blocking(move || Settings::load(&app)).await?;
+    {
+        let mut settings = state.settings.lock().await;
+        *settings = loaded.clone();
+    }
+
+    // Never return ARL to the renderer process.
+    let mut safe = loaded;
+    safe.arl = String::new();
+    Ok(safe)
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    new_settings: Settings,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let _settings_io = state.settings_io.lock().await;
+    let settings = state.settings.lock().await;
+    let mut merged = new_settings.clone();
+
+    // Allow non-auth settings updates without exposing ARL to the renderer.
+    if merged.arl.trim().is_empty() {
+        merged.arl = settings.arl.clone();
+    }
+
+    if merged.arl.trim().is_empty() {
+        return Err("ARL token is required".to_string());
+    }
+
+    drop(settings);
+    let settings_to_save = merged.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = merged;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app.dialog()
+        .file()
+        .set_title("Choose download folder")
+        .pick_folder(move |folder_path| {
+            let _ = tx.send(folder_path.map(|p| p.to_string()));
+        });
+
+    match rx.await {
+        Ok(path) => Ok(path),
+        Err(_) => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn add_search_history(
+    query: String,
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let _settings_io = state.settings_io.lock().await;
+    let mut settings = state.settings.lock().await.clone();
+    
+    if !settings.enable_search_history {
+        return Ok(());
+    }
+    
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(());
+    }
+
+    // Reject unreasonably long queries to prevent oversized settings file
+    if query.len() > 500 {
+        return Ok(());
+    }
+
+    // Remove duplicate if exists
+    settings.search_history.retain(|q| q != &query);
+    
+    // Add to front
+    settings.search_history.insert(0, query);
+    
+    // Keep only last 20 searches
+    if settings.search_history.len() > 20 {
+        settings.search_history.truncate(20);
+    }
+    
+    let settings_to_save = settings.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = settings;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_search_history(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let settings = state.settings.lock().await;
+    Ok(settings.search_history.clone())
+}
+
+#[tauri::command]
+pub async fn clear_search_history(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let _settings_io = state.settings_io.lock().await;
+    let mut settings = state.settings.lock().await.clone();
+    settings.search_history.clear();
+    let settings_to_save = settings.clone();
+    run_blocking(move || settings_to_save.save(&app)).await?;
+    *state.settings.lock().await = settings;
+    Ok(())
+}
+
