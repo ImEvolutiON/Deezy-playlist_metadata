@@ -1,7 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
-import { activeDownloads, downloadQueue, pausedDownloads } from './stores';
+import {
+  activeDownloads,
+  downloadQueue,
+  pausedDownloads,
+  type QueuedDownload,
+  type TrayStatusUpdate,
+  type TrayTooltipUpdate
+} from './stores';
 import { downloadQueueManager } from './downloadQueue';
 
 const DEFAULT_TOOLTIP = 'Deezy';
@@ -81,7 +88,7 @@ class TrayManager {
     });
   }
 
-  private pauseAllDownloads(queue: any[]): void {
+  private pauseAllDownloads(queue: QueuedDownload[]): void {
     const activeTrackIds = downloadQueueManager.getActiveTrackIds();
     
     activeTrackIds.forEach(trackId => {
@@ -102,13 +109,15 @@ class TrayManager {
     const downloadsPaused = paused.size > 0;
 
     try {
-      await invoke('update_tray_status', {
+      const statusUpdate: TrayStatusUpdate = {
         downloadsActive,
         downloadsPaused
-      });
+      };
+      await invoke('update_tray_status', statusUpdate);
 
       const tooltip = this.buildTooltip(active, queue.length, paused.size, downloadsActive, downloadsPaused);
-      await invoke('set_tray_tooltip', { tooltip });
+      const tooltipUpdate: TrayTooltipUpdate = { tooltip };
+      await invoke('set_tray_tooltip', tooltipUpdate);
     } catch (error) {
       console.error('Failed to update tray status:', error);
     }
@@ -137,7 +146,8 @@ class TrayManager {
 
   async updateTooltip(text: string): Promise<void> {
     try {
-      await invoke('set_tray_tooltip', { tooltip: text });
+      const tooltipUpdate: TrayTooltipUpdate = { tooltip: text };
+      await invoke('set_tray_tooltip', tooltipUpdate);
     } catch (error) {
       console.error('Failed to update tray tooltip:', error);
     }

@@ -1,5 +1,6 @@
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { invoke } from '@tauri-apps/api/core';
+import type { AppSettings } from './stores';
 
 interface PendingNotification {
   title: string;
@@ -16,7 +17,7 @@ class NotificationManager {
 
   async initialize(): Promise<void> {
     try {
-      const settings: any = await invoke('get_settings');
+      const settings = await invoke<AppSettings>('get_settings');
       this.notificationsEnabled = settings.notifications_enabled ?? true;
     } catch (err) {
       console.error('Failed to load notification settings:', err);

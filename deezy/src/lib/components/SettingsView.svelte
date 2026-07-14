@@ -1,7 +1,20 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { loggedIn, userInfo, theme, notificationsEnabled, searchHistory, currentLocale, settingsArlDraft, type UserInfo, type Theme } from '$lib/stores';
+  import {
+    loggedIn,
+    userInfo,
+    theme,
+    notificationsEnabled,
+    searchHistory,
+    currentLocale,
+    settingsArlDraft,
+    type AppSettings,
+    type FolderStructure,
+    type QualityOption,
+    type UserInfo,
+    type Theme
+  } from '$lib/stores';
   import { notificationManager } from '$lib/notifications';
   import { _, locale } from 'svelte-i18n';
   import { supportedLocales } from '$lib/i18n';
@@ -15,10 +28,11 @@
   
   let arl = $state('');
   let outputDir = $state('');
-  let quality = $state('MP3_320');
-  let folderStructure = $state('flat');
+  let quality = $state<QualityOption>('MP3_320');
+  let folderStructure = $state<FolderStructure>('flat');
   let customFolderTemplate = $state('{artist}/{release_date} - {album}/{track_number} - {title}');
   let currentTheme = $state<Theme>('dark');
+  let customTheme = $state<string | null>(null);
   let enableNotifications = $state(true);
   let enableSearchHistory = $state(true);
   let closeToTray = $state(true);
@@ -60,12 +74,13 @@
     void (async () => {
       arl = $settingsArlDraft;
       try {
-        const settings: any = await invoke('get_settings');
+        const settings = await invoke<AppSettings>('get_settings');
         if (settings.output_dir) outputDir = settings.output_dir;
         if (settings.quality) quality = settings.quality;
         if (settings.folder_structure) folderStructure = settings.folder_structure;
         if (settings.custom_folder_template) customFolderTemplate = settings.custom_folder_template;
         if (settings.theme) currentTheme = settings.theme;
+        customTheme = settings.custom_theme;
         if (settings.locale) selectedLocale = settings.locale;
         if (settings.notifications_enabled !== undefined) {
           enableNotifications = settings.notifications_enabled;
@@ -120,7 +135,7 @@
       return { valid: false, error: $_('settings.status.outputDirRequired') };
     }
 
-    if (!VALID_QUALITIES.includes(quality as any)) {
+    if (!VALID_QUALITIES.includes(quality)) {
       return { valid: false, error: $_('settings.status.qualityInvalid') };
     }
 
@@ -143,21 +158,21 @@
     showStatus($_('settings.status.loggingIn'), 'info');
 
     try {
-      await invoke('save_settings', {
-        newSettings: {
-          arl: trimmedArl,
-          output_dir: outputDir.trim(),
-          quality: quality,
-          folder_structure: folderStructure,
-          custom_folder_template: customFolderTemplate.trim(),
-          theme: currentTheme,
-          notifications_enabled: enableNotifications,
-          enable_search_history: enableSearchHistory,
-          close_to_tray: closeToTray,
-          locale: selectedLocale,
-          search_history: []
-        }
-      });
+      const newSettings: AppSettings = {
+        arl: trimmedArl,
+        output_dir: outputDir.trim(),
+        quality,
+        folder_structure: folderStructure,
+        custom_folder_template: customFolderTemplate.trim(),
+        theme: currentTheme,
+        custom_theme: customTheme,
+        notifications_enabled: enableNotifications,
+        enable_search_history: enableSearchHistory,
+        close_to_tray: closeToTray,
+        locale: selectedLocale,
+        search_history: []
+      };
+      await invoke('save_settings', { newSettings });
 
       notificationManager.setEnabled(enableNotifications);
       notificationsEnabled.set(enableNotifications);
@@ -190,15 +205,11 @@
     }
   }
 
-  async function updateSetting<K extends string>(key: K, value: any): Promise<void> {
+  async function updateSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void> {
     try {
-      const settings: any = await invoke('get_settings');
-      await invoke('save_settings', {
-        newSettings: {
-          ...settings,
-          [key]: value
-        }
-      });
+      const settings = await invoke<AppSettings>('get_settings');
+      settings[key] = value;
+      await invoke('save_settings', { newSettings: settings });
     } catch (err) {
       console.error(`Failed to save ${key} setting:`, err);
       throw err;

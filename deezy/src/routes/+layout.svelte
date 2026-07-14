@@ -11,9 +11,10 @@
     theme, 
     currentLocale, 
     type UserInfo, 
-    type DownloadItem, 
+    type DownloadItem,
     type DownloadStatus,
-    type Theme 
+    type Theme,
+    type AppSettings
   } from '$lib/stores';
   import { initI18n } from '$lib/i18n';
   import { locale as i18nLocale } from 'svelte-i18n';
@@ -26,14 +27,6 @@
   
   let appInitialized = $state(false);
   let uiVisible = $state(false);
-
-  interface Settings {
-    output_dir: string;
-    quality: string;
-    theme?: Theme;
-    custom_theme?: string;
-    locale?: string;
-  }
 
   interface DownloadProgressEvent {
     track_id: string;
@@ -73,7 +66,7 @@
 
   async function loadAndApplyCustomTheme(): Promise<void> {
     try {
-      const settings = await invoke<Settings>('get_settings');
+      const settings = await invoke<AppSettings>('get_settings');
       if (!settings.custom_theme) return;
 
       const themeData = await invoke<CustomThemeData>('load_custom_theme', { 
@@ -124,7 +117,7 @@
     await loadDownloadHistory();
 
     try {
-      const settings = await invoke<Settings>('get_settings');
+      const settings = await invoke<AppSettings>('get_settings');
       
       const savedLocale = settings.locale || 'en';
       await initI18n(savedLocale);

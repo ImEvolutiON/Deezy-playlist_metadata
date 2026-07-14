@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
-  import { theme } from '$lib/stores';
+  import { theme, type AppSettings } from '$lib/stores';
   
   interface ThemeColors {
     'bg-darkest': string;
@@ -74,7 +74,7 @@
   
   async function loadCurrentTheme(): Promise<void> {
     try {
-      const settings: any = await invoke('get_settings');
+      const settings = await invoke<AppSettings>('get_settings');
       if (settings.custom_theme) {
         selectedTheme = settings.custom_theme;
       }
@@ -112,16 +112,15 @@
       
       applyThemeColors(themeData.colors);
       
-      const settings: any = await invoke('get_settings');
-      await invoke('save_settings', {
-        newSettings: {
-          ...settings,
-          theme: 'custom',
-          custom_theme: themeName
-        }
-      });
+      const settings = await invoke<AppSettings>('get_settings');
+      const newSettings: AppSettings = {
+        ...settings,
+        theme: 'custom',
+        custom_theme: themeName
+      };
+      await invoke('save_settings', { newSettings });
       
-      theme.set('custom' as any);
+      theme.set('custom');
       selectedTheme = themeName;
       
       showStatus(`Theme "${themeData.name}" applied successfully`, 'success');
@@ -136,14 +135,13 @@
     clearThemeColors();
     
     try {
-      const settings: any = await invoke('get_settings');
-      await invoke('save_settings', {
-        newSettings: {
-          ...settings,
-          theme: 'dark',
-          custom_theme: null
-        }
-      });
+      const settings = await invoke<AppSettings>('get_settings');
+      const newSettings: AppSettings = {
+        ...settings,
+        theme: 'dark',
+        custom_theme: null
+      };
+      await invoke('save_settings', { newSettings });
       
       theme.set('dark');
       selectedTheme = null;

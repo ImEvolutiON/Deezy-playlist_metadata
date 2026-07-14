@@ -3,6 +3,31 @@ import { writable, type Writable } from 'svelte/store';
 export type DownloadStatus = 'downloading' | 'complete' | 'error' | 'paused' | 'resolving' | 'tagging';
 export type Theme = 'light' | 'dark' | 'system' | 'custom';
 export type QualityOption = 'MP3_128' | 'MP3_320' | 'FLAC';
+export type FolderStructure = 'flat' | 'artist_track' | 'artist_album_track' | 'album_track' | 'custom';
+
+export interface AppSettings {
+  arl: string;
+  output_dir: string;
+  quality: QualityOption;
+  folder_structure: FolderStructure;
+  custom_folder_template: string;
+  theme: Theme | null;
+  custom_theme: string | null;
+  search_history: string[];
+  enable_search_history: boolean;
+  notifications_enabled: boolean;
+  locale: string;
+  close_to_tray: boolean;
+}
+
+export interface TrayStatusUpdate extends Record<string, unknown> {
+  downloadsActive: boolean;
+  downloadsPaused: boolean;
+}
+
+export interface TrayTooltipUpdate extends Record<string, unknown> {
+  tooltip: string;
+}
 
 export interface UserInfo {
   id: number;
