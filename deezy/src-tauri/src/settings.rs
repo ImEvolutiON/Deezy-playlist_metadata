@@ -81,6 +81,13 @@ impl Default for Settings {
     }
 }
 
+fn keyring_enabled() -> bool {
+    !matches!(
+        std::env::var("DEEZY_NO_KEYRING").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
 fn save_arl_to_keyring(arl: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .map_err(|e| format!("Keyring error: {}", e))?;
@@ -92,6 +99,46 @@ fn save_arl_to_keyring(arl: &str) -> Result<(), String> {
 fn load_arl_from_keyring() -> Option<String> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
     entry.get_password().ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArlStorage {
+    Keyring,
+    PlainFile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArlStorageStatus {
+    pub storage: ArlStorage,
+    pub reason: Option<String>,
+}
+
+impl ArlStorageStatus {
+    fn secure() -> Self {
+        Self { storage: ArlStorage::Keyring, reason: None }
+    }
+
+    fn insecure(reason: impl Into<String>) -> Self {
+        Self { storage: ArlStorage::PlainFile, reason: Some(reason.into()) }
+    }
+}
+
+pub fn arl_storage_status() -> ArlStorageStatus {
+    if !keyring_enabled() {
+        return ArlStorageStatus::insecure("Disabled by DEEZY_NO_KEYRING");
+    }
+
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+        Ok(entry) => entry,
+        Err(e) => return ArlStorageStatus::insecure(e.to_string()),
+    };
+
+    // NoEntry means the credential store answered but holds nothing yet.
+    match entry.get_password() {
+        Ok(_) | Err(keyring::Error::NoEntry) => ArlStorageStatus::secure(),
+        Err(e) => ArlStorageStatus::insecure(e.to_string()),
+    }
 }
 
 impl Settings {
@@ -150,9 +197,12 @@ impl Settings {
             Self::default()
         };
 
+        if arl_storage_status().storage == ArlStorage::PlainFile {
+            return Ok(settings);
+        }
+
         // Migrate: if ARL was stored in the JSON file, move it to keyring
-        if !settings.arl.is_empty() {
-            save_arl_to_keyring(&settings.arl)?;
+        if !settings.arl.is_empty() && save_arl_to_keyring(&settings.arl).is_ok() {
             // Re-save settings without the ARL in the file
             let mut clean = settings.clone();
             clean.arl = String::new();
@@ -174,13 +224,16 @@ impl Settings {
         // Validate before saving
         self.validate()?;
 
-        // Save ARL to OS credential store.
-        // Do not persist plaintext credentials to disk if credential storage fails.
-        save_arl_to_keyring(&self.arl)?;
-
-        // Write settings to disk without ARL.
         let mut settings_for_disk = self.clone();
-        settings_for_disk.arl = String::new();
+        if keyring_enabled() {
+            match save_arl_to_keyring(&self.arl) {
+                Ok(()) => settings_for_disk.arl = String::new(),
+                Err(e) => eprintln!(
+                    "Warning: secure credential storage unavailable ({}). Storing ARL in settings.json",
+                    e
+                ),
+            }
+        }
 
         let path = Self::path(app)?;
         let data = serde_json::to_string_pretty(&settings_for_disk).map_err(|e| e.to_string())?;

@@ -20,6 +20,11 @@ export interface AppSettings {
   close_to_tray: boolean;
 }
 
+export interface ArlStorageStatus {
+  storage: 'keyring' | 'plain_file';
+  reason: string | null;
+}
+
 export interface TrayStatusUpdate extends Record<string, unknown> {
   downloadsActive: boolean;
   downloadsPaused: boolean;
