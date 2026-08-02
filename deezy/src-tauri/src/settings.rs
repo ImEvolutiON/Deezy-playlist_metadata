@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 const KEYRING_SERVICE: &str = "com.pierr.deezy";
@@ -148,8 +148,6 @@ fn disk_arl(app: &tauri::AppHandle) -> Option<String> {
 pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
     let probe = keyring_probe();
 
-    // Ground truth beats prediction: an ARL sitting in settings.json is in
-    // plain-file storage no matter what the credential store reports.
     if disk_arl(app).is_some_and(|arl| !arl.trim().is_empty()) {
         return ArlStorageStatus { storage: ArlStorage::PlainFile, reason: probe.err() };
     }
@@ -160,15 +158,22 @@ pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
     }
 }
 
-fn write_private(path: &PathBuf, data: &[u8]) -> Result<(), String> {
-    // Narrow an existing file before writing; mode() below only applies on create.
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn restrict_to_owner(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if path.exists() {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| e.to_string())?;
-        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
+    // mode() below only applies on create, so existing files need this too.
+    if path.exists() {
+        restrict_to_owner(path)?;
     }
 
     let mut options = std::fs::OpenOptions::new();
@@ -233,6 +238,10 @@ impl Settings {
     pub fn load(app: &tauri::AppHandle) -> Result<Self, String> {
         let path = Self::path(app)?;
         let mut settings: Self = if path.exists() {
+            if let Err(e) = restrict_to_owner(&path) {
+                eprintln!("Warning: could not restrict permissions on {:?}: {}", path, e);
+            }
+
             let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
             serde_json::from_str(&data).map_err(|e| e.to_string())?
         } else {
@@ -245,8 +254,6 @@ impl Settings {
 
         // Migrate: if ARL was stored in the JSON file, move it to keyring
         if !settings.arl.is_empty() {
-            // Bail before the keyring read below, which would otherwise replace
-            // the still-valid file ARL with a stale credential-store entry.
             if save_arl_to_keyring(&settings.arl).is_err() {
                 return Ok(settings);
             }
