@@ -78,12 +78,6 @@
       arl = $settingsArlDraft;
 
       try {
-        arlStorage = await invoke<ArlStorageStatus>('get_arl_storage_status');
-      } catch (err) {
-        console.error('Failed to read credential storage status:', err);
-      }
-
-      try {
         const settings = await invoke<AppSettings>('get_settings');
         if (settings.output_dir) outputDir = settings.output_dir;
         if (settings.quality) quality = settings.quality;
@@ -104,6 +98,8 @@
       } catch {
         // First run
       }
+
+      await refreshArlStorage();
 
       // Initialize notification manager
       notificationManager.initialize();
@@ -156,6 +152,14 @@
     return { valid: true };
   }
   
+  async function refreshArlStorage(): Promise<void> {
+    try {
+      arlStorage = await invoke<ArlStorageStatus>('get_arl_storage_status');
+    } catch (err) {
+      console.error('Failed to read credential storage status:', err);
+    }
+  }
+
   async function saveSettings(): Promise<void> {
     const validation = validateSettings();
     if (!validation.valid) {
@@ -183,6 +187,7 @@
         search_history: []
       };
       await invoke('save_settings', { newSettings });
+      await refreshArlStorage();
 
       notificationManager.setEnabled(enableNotifications);
       notificationsEnabled.set(enableNotifications);

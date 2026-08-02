@@ -131,7 +131,7 @@
       "savedKeyring": "ARL-Token ist im Anmeldeinformationsspeicher des Systems gespeichert (aus Sicherheitsgründen verborgen)",
       "savedPlainFile": "ARL-Token ist gespeichert (aus Sicherheitsgründen verborgen)",
       "insecureStorageTitle": "Sicherer Anmeldeinformationsspeicher nicht verfügbar",
-      "insecureStorageHint": "Ihr ARL wird im Klartext in settings.json gespeichert. Wer diese Datei lesen kann, kann Ihr Deezer-Konto nutzen. Starten Sie einen Anmeldedienst (gnome-keyring, KWallet) und danach Deezy neu, um ihn sicher zu speichern."
+      "insecureStorageHint": "Ihr ARL wird im Klartext in settings.json gespeichert. Wer diese Datei lesen kann, kann Ihr Deezer-Konto nutzen. Starten Sie Deezy neu, sobald der Anmeldeinformationsspeicher des Systems verfügbar ist, um ihn dorthin zu verschieben."
     },
     "outputDir": {
       "label": "Download-Ordner",

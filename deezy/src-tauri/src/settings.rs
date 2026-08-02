@@ -124,21 +124,63 @@ impl ArlStorageStatus {
     }
 }
 
-pub fn arl_storage_status() -> ArlStorageStatus {
+fn keyring_probe() -> Result<(), String> {
     if !keyring_enabled() {
-        return ArlStorageStatus::insecure("Disabled by DEEZY_NO_KEYRING");
+        return Err("Disabled by DEEZY_NO_KEYRING".to_string());
     }
 
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
-        Ok(entry) => entry,
-        Err(e) => return ArlStorageStatus::insecure(e.to_string()),
-    };
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
 
     // NoEntry means the credential store answered but holds nothing yet.
     match entry.get_password() {
-        Ok(_) | Err(keyring::Error::NoEntry) => ArlStorageStatus::secure(),
-        Err(e) => ArlStorageStatus::insecure(e.to_string()),
+        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
+}
+
+fn disk_arl(app: &tauri::AppHandle) -> Option<String> {
+    let path = Settings::path(app).ok()?;
+    let data = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    value.get("arl")?.as_str().map(|s| s.to_string())
+}
+
+pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
+    let probe = keyring_probe();
+
+    // Ground truth beats prediction: an ARL sitting in settings.json is in
+    // plain-file storage no matter what the credential store reports.
+    if disk_arl(app).is_some_and(|arl| !arl.trim().is_empty()) {
+        return ArlStorageStatus { storage: ArlStorage::PlainFile, reason: probe.err() };
+    }
+
+    match probe {
+        Ok(()) => ArlStorageStatus::secure(),
+        Err(e) => ArlStorageStatus::insecure(e),
+    }
+}
+
+fn write_private(path: &PathBuf, data: &[u8]) -> Result<(), String> {
+    // Narrow an existing file before writing; mode() below only applies on create.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if path.exists() {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path).map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut file, data).map_err(|e| e.to_string())
 }
 
 impl Settings {
@@ -197,17 +239,23 @@ impl Settings {
             Self::default()
         };
 
-        if arl_storage_status().storage == ArlStorage::PlainFile {
+        if keyring_probe().is_err() {
             return Ok(settings);
         }
 
         // Migrate: if ARL was stored in the JSON file, move it to keyring
-        if !settings.arl.is_empty() && save_arl_to_keyring(&settings.arl).is_ok() {
+        if !settings.arl.is_empty() {
+            // Bail before the keyring read below, which would otherwise replace
+            // the still-valid file ARL with a stale credential-store entry.
+            if save_arl_to_keyring(&settings.arl).is_err() {
+                return Ok(settings);
+            }
+
             // Re-save settings without the ARL in the file
             let mut clean = settings.clone();
             clean.arl = String::new();
             let data = serde_json::to_string_pretty(&clean).map_err(|e| e.to_string())?;
-            std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+            write_private(&path, data.as_bytes())?;
         }
 
         // Load ARL from OS credential store
@@ -237,14 +285,7 @@ impl Settings {
 
         let path = Self::path(app)?;
         let data = serde_json::to_string_pretty(&settings_for_disk).map_err(|e| e.to_string())?;
-        std::fs::write(&path, &data).map_err(|e| e.to_string())?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&path, perms).map_err(|e| e.to_string())?;
-        }
+        write_private(&path, data.as_bytes())?;
 
         Ok(())
     }

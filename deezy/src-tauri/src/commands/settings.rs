@@ -19,8 +19,8 @@ pub async fn get_settings(
 }
 
 #[tauri::command]
-pub async fn get_arl_storage_status() -> Result<ArlStorageStatus, String> {
-    run_blocking(|| Ok(crate::settings::arl_storage_status())).await
+pub async fn get_arl_storage_status(app: AppHandle) -> Result<ArlStorageStatus, String> {
+    run_blocking(move || Ok(crate::settings::arl_storage_status(&app))).await
 }
 
 #[tauri::command]

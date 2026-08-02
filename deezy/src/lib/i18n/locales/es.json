@@ -131,7 +131,7 @@
       "savedKeyring": "El token ARL está guardado en el almacén de credenciales del sistema (oculto por seguridad)",
       "savedPlainFile": "El token ARL está guardado (oculto por seguridad)",
       "insecureStorageTitle": "Almacenamiento seguro de credenciales no disponible",
-      "insecureStorageHint": "Tu ARL se guarda como texto plano en settings.json. Cualquiera que pueda leer ese archivo puede usar tu cuenta de Deezer. Inicia un servicio de credenciales (gnome-keyring, KWallet) y reinicia Deezy para guardarlo de forma segura."
+      "insecureStorageHint": "Tu ARL se guarda como texto plano en settings.json. Cualquiera que pueda leer ese archivo puede usar tu cuenta de Deezer. Reinicia Deezy cuando el almacén de credenciales del sistema esté disponible para moverlo allí."
     },
     "outputDir": {
       "label": "Carpeta de Descargas",
