@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
 
 const KEYRING_SERVICE: &str = "com.pierr.deezy";
 const KEYRING_USER: &str = "arl_token";
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -96,9 +99,23 @@ fn save_arl_to_keyring(arl: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to save ARL to credential store: {}", e))
 }
 
-fn load_arl_from_keyring() -> Option<String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
-    entry.get_password().ok()
+fn delete_arl_from_keyring() -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Keyring error: {}", e))?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to remove stale ARL from credential store: {}", e)),
+    }
+}
+
+fn load_arl_from_keyring() -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Keyring error: {}", e))?;
+    match entry.get_password() {
+        Ok(arl) => Ok(Some(arl)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("Failed to read ARL from credential store: {}", e)),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -110,82 +127,211 @@ pub enum ArlStorage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArlStorageStatus {
-    pub storage: ArlStorage,
+    pub storage: Option<ArlStorage>,
     pub reason: Option<String>,
 }
 
 impl ArlStorageStatus {
     fn secure() -> Self {
-        Self { storage: ArlStorage::Keyring, reason: None }
+        Self { storage: Some(ArlStorage::Keyring), reason: None }
     }
 
-    fn insecure(reason: impl Into<String>) -> Self {
-        Self { storage: ArlStorage::PlainFile, reason: Some(reason.into()) }
-    }
-}
-
-fn keyring_probe() -> Result<(), String> {
-    if !keyring_enabled() {
-        return Err("Disabled by DEEZY_NO_KEYRING".to_string());
-    }
-
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
-
-    // NoEntry means the credential store answered but holds nothing yet.
-    match entry.get_password() {
-        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    fn none(reason: Option<String>) -> Self {
+        Self { storage: None, reason }
     }
 }
 
-fn disk_arl(app: &tauri::AppHandle) -> Option<String> {
-    let path = Settings::path(app).ok()?;
-    let data = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
-    value.get("arl")?.as_str().map(|s| s.to_string())
+fn disk_arl(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    let path = Settings::path(app)?;
+    let Some(data) = read_private(&path)? else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    Ok(value.get("arl").and_then(|arl| arl.as_str()).map(str::to_string))
 }
 
 pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
-    let probe = keyring_probe();
-
-    if disk_arl(app).is_some_and(|arl| !arl.trim().is_empty()) {
-        return ArlStorageStatus { storage: ArlStorage::PlainFile, reason: probe.err() };
+    match disk_arl(app) {
+        Ok(Some(arl)) if !arl.trim().is_empty() => {
+            let reason = if keyring_enabled() {
+                load_arl_from_keyring().err()
+            } else {
+                Some("Disabled by DEEZY_NO_KEYRING".to_string())
+            };
+            return ArlStorageStatus {
+                storage: Some(ArlStorage::PlainFile),
+                reason,
+            };
+        }
+        Err(e) => {
+            return ArlStorageStatus::none(Some(format!(
+                "Cannot safely read settings.json: {}",
+                e
+            )));
+        }
+        _ => {}
     }
 
-    match probe {
-        Ok(()) => ArlStorageStatus::secure(),
-        Err(e) => ArlStorageStatus::insecure(e),
+    if !keyring_enabled() {
+        return ArlStorageStatus::none(Some("Disabled by DEEZY_NO_KEYRING".to_string()));
+    }
+
+    match load_arl_from_keyring() {
+        Ok(Some(arl)) if !arl.trim().is_empty() => ArlStorageStatus::secure(),
+        Ok(_) => ArlStorageStatus::none(None),
+        Err(e) => ArlStorageStatus::none(Some(e)),
     }
 }
 
-#[cfg_attr(not(unix), allow(unused_variables))]
-fn restrict_to_owner(path: &Path) -> Result<(), String> {
+fn verify_private_file(file: &std::fs::File) -> Result<(), String> {
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err("settings.json is not a regular file".to_string());
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .map_err(|e| e.to_string())?;
+        let mode = file
+            .metadata()
+            .map_err(|e| e.to_string())?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err("settings.json permissions are not owner-only".to_string());
+        }
     }
 
     Ok(())
 }
 
-fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
-    // mode() below only applies on create, so existing files need this too.
-    if path.exists() {
-        restrict_to_owner(path)?;
-    }
-
+fn read_private(path: &Path) -> Result<Option<String>, String> {
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
+    }
+    #[cfg(not(unix))]
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            return Err("Refusing to use a symlink for settings.json".to_string());
+        }
     }
 
-    let mut file = options.open(path).map_err(|e| e.to_string())?;
-    std::io::Write::write_all(&mut file, data).map_err(|e| e.to_string())
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    verify_private_file(&file)?;
+
+    let mut data = String::new();
+    file.read_to_string(&mut data).map_err(|e| e.to_string())?;
+    Ok(Some(data))
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::rename(source, destination).map_err(|e| e.to_string())
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    match std::fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("Refusing to replace a non-regular settings.json".to_string());
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.to_string()),
+    }
+
+    let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let result = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if result == 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "settings.json has no parent directory".to_string())?;
+    let mut last_error = None;
+
+    for _ in 0..10 {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp_path = parent.join(format!(
+            ".settings.json.{}.{}.tmp",
+            std::process::id(),
+            counter
+        ));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+
+        let mut file = match options.open(&temp_path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_error = Some(e.to_string());
+                continue;
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+
+        let write_result = (|| {
+            verify_private_file(&file)?;
+            file.write_all(data).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            drop(file);
+
+            replace_file(&temp_path, path)?;
+            #[cfg(unix)]
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+
+        if write_result.is_err() {
+            let _ = std::fs::remove_file(&temp_path);
+        }
+        return write_result;
+    }
+
+    Err(format!(
+        "Could not reserve a temporary settings file: {}",
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
 }
 
 impl Settings {
@@ -237,18 +383,15 @@ impl Settings {
 
     pub fn load(app: &tauri::AppHandle) -> Result<Self, String> {
         let path = Self::path(app)?;
-        let mut settings: Self = if path.exists() {
-            if let Err(e) = restrict_to_owner(&path) {
-                eprintln!("Warning: could not restrict permissions on {:?}: {}", path, e);
-            }
-
-            let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut settings: Self = if let Some(data) = read_private(&path).map_err(|e| {
+                format!("Refusing to load settings without private file permissions: {}", e)
+            })? {
             serde_json::from_str(&data).map_err(|e| e.to_string())?
         } else {
             Self::default()
         };
 
-        if keyring_probe().is_err() {
+        if !keyring_enabled() {
             return Ok(settings);
         }
 
@@ -266,7 +409,7 @@ impl Settings {
         }
 
         // Load ARL from OS credential store
-        if let Some(arl) = load_arl_from_keyring() {
+        if let Ok(Some(arl)) = load_arl_from_keyring() {
             if !arl.is_empty() {
                 settings.arl = arl;
             }
@@ -279,21 +422,142 @@ impl Settings {
         // Validate before saving
         self.validate()?;
 
-        let mut settings_for_disk = self.clone();
+        let path = Self::path(app)?;
+        let data = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        write_private(&path, data.as_bytes())?;
+
         if keyring_enabled() {
             match save_arl_to_keyring(&self.arl) {
-                Ok(()) => settings_for_disk.arl = String::new(),
-                Err(e) => eprintln!(
-                    "Warning: secure credential storage unavailable ({}). Storing ARL in settings.json",
-                    e
-                ),
+                Ok(()) => {
+                    let mut settings_for_disk = self.clone();
+                    settings_for_disk.arl = String::new();
+                    let data = serde_json::to_string_pretty(&settings_for_disk)
+                        .map_err(|e| e.to_string())?;
+                    write_private(&path, data.as_bytes())?;
+                }
+                Err(e) => {
+                    let cleanup = delete_arl_from_keyring()
+                        .err()
+                        .map(|cleanup_error| format!("; {}", cleanup_error))
+                        .unwrap_or_default();
+                    eprintln!(
+                        "Warning: secure credential storage unavailable ({}{}). Storing ARL in settings.json",
+                        e, cleanup
+                    );
+                }
             }
         }
 
-        let path = Self::path(app)?;
-        let data = serde_json::to_string_pretty(&settings_for_disk).map_err(|e| e.to_string())?;
-        write_private(&path, data.as_bytes())?;
-
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_private, write_private};
+    #[cfg(unix)]
+    use std::ffi::CString;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "deezy-settings-{}-{}-{}",
+            name,
+            std::process::id(),
+            nonce
+        ));
+        std::fs::create_dir(&path).expect("test directory should be created");
+        path
+    }
+
+    #[test]
+    fn private_file_round_trip_succeeds() {
+        let dir = test_dir("permissions");
+        let path = dir.join("settings.json");
+
+        write_private(&path, br#"{"arl":"secret"}"#).expect("private write should succeed");
+
+        #[cfg(unix)]
+        {
+            let mode = std::fs::metadata(&path)
+                .expect("settings file should exist")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0);
+        }
+        assert_eq!(
+            read_private(&path)
+                .expect("private read should succeed")
+                .as_deref(),
+            Some(r#"{"arl":"secret"}"#)
+        );
+
+        write_private(&path, b"replacement").expect("private replacement should succeed");
+        assert_eq!(
+            read_private(&path)
+                .expect("replacement should be readable")
+                .as_deref(),
+            Some("replacement")
+        );
+
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn settings_symlink_reads_are_rejected() {
+        let dir = test_dir("symlink");
+        let target = dir.join("target.json");
+        let link = dir.join("settings.json");
+        std::fs::write(&target, br#"{"arl":"secret"}"#).expect("target should be written");
+        symlink(&target, &link).expect("symlink should be created");
+
+        read_private(&link).expect_err("symlink must not be read");
+
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_is_rejected_without_blocking() {
+        let dir = test_dir("fifo");
+        let path = dir.join("settings.json");
+        let c_path = CString::new(path.as_os_str().as_bytes()).expect("path should not contain NUL");
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+
+        read_private(&path).expect_err("FIFO must not be read");
+
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_write_replaces_symlink_without_following_it() {
+        let dir = test_dir("symlink-write");
+        let target = dir.join("target.json");
+        let link = dir.join("settings.json");
+        std::fs::write(&target, b"unchanged").expect("target should be written");
+        symlink(&target, &link).expect("symlink should be created");
+
+        write_private(&link, b"replacement").expect("private write should replace the link");
+
+        assert_eq!(std::fs::read(&target).expect("target should remain"), b"unchanged");
+        assert_eq!(
+            read_private(&link)
+                .expect("replacement should be readable")
+                .as_deref(),
+            Some("replacement")
+        );
+
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
     }
 }

@@ -21,7 +21,7 @@ export interface AppSettings {
 }
 
 export interface ArlStorageStatus {
-  storage: 'keyring' | 'plain_file';
+  storage: 'keyring' | 'plain_file' | null;
   reason: string | null;
 }
 
@@ -109,4 +109,3 @@ export const audioPlayer: Writable<AudioPlayerState> = writable({
   duration: 0,
   volume: DEFAULT_VOLUME,
 });
-
