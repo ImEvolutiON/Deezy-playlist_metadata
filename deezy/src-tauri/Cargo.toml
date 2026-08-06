@@ -31,11 +31,13 @@ id3 = "1"
 metaflac = "0.2"
 image = "0.25"
 keyring = { version = "3", features = ["sync-secret-service", "windows-native", "apple-native"] }
-libc = "0.2"
 regex = "1"
 lazy_static = "1.4"
 url = "2"
 base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

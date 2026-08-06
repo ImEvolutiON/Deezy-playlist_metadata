@@ -19,6 +19,7 @@ pub async fn get_settings(
 }
 
 #[tauri::command]
+/// Returns the persisted ARL storage location while serializing access with settings writes.
 pub async fn get_arl_storage_status(
     state: tauri::State<'_, AppState>,
     app: AppHandle,

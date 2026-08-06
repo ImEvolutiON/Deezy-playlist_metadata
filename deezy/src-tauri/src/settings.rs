@@ -120,39 +120,49 @@ fn load_arl_from_keyring() -> Result<Option<String>, String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// The persisted location of the current ARL credential.
 pub enum ArlStorage {
     Keyring,
     PlainFile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// The persisted ARL location and any storage warning detected while inspecting it.
 pub struct ArlStorageStatus {
     pub storage: Option<ArlStorage>,
     pub reason: Option<String>,
 }
 
 impl ArlStorageStatus {
-    fn secure() -> Self {
-        Self { storage: Some(ArlStorage::Keyring), reason: None }
-    }
-
     fn none(reason: Option<String>) -> Self {
         Self { storage: None, reason }
     }
 }
 
-fn disk_arl(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+fn disk_arl(app: &tauri::AppHandle) -> Result<(Option<String>, Option<String>), String> {
     let path = Settings::path(app)?;
-    let Some(data) = read_private(&path)? else {
-        return Ok(None);
+    let Some(contents) = read_private(&path)? else {
+        return Ok((None, None));
     };
-    let value: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
-    Ok(value.get("arl").and_then(|arl| arl.as_str()).map(str::to_string))
+    let value: serde_json::Value =
+        serde_json::from_str(&contents.data).map_err(|e| e.to_string())?;
+    Ok((
+        value.get("arl").and_then(|arl| arl.as_str()).map(str::to_string),
+        contents.hardening_error,
+    ))
 }
 
+/// Reports where the current ARL is actually persisted without exposing its value.
 pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
+    let disk_hardening_error;
     match disk_arl(app) {
-        Ok(Some(arl)) if !arl.trim().is_empty() => {
+        Ok((Some(arl), hardening_error)) if !arl.trim().is_empty() => {
+            if let Some(error) = hardening_error {
+                return ArlStorageStatus::none(Some(format!(
+                    "Cannot safely use the ARL in settings.json: {}",
+                    error
+                )));
+            }
             let reason = if keyring_enabled() {
                 load_arl_from_keyring().err()
             } else {
@@ -163,31 +173,46 @@ pub fn arl_storage_status(app: &tauri::AppHandle) -> ArlStorageStatus {
                 reason,
             };
         }
+        Ok((_, hardening_error)) => disk_hardening_error = hardening_error,
         Err(e) => {
             return ArlStorageStatus::none(Some(format!(
                 "Cannot safely read settings.json: {}",
                 e
             )));
         }
-        _ => {}
     }
 
     if !keyring_enabled() {
-        return ArlStorageStatus::none(Some("Disabled by DEEZY_NO_KEYRING".to_string()));
+        return ArlStorageStatus::none(disk_hardening_error.or_else(|| {
+            Some("Disabled by DEEZY_NO_KEYRING".to_string())
+        }));
     }
 
     match load_arl_from_keyring() {
-        Ok(Some(arl)) if !arl.trim().is_empty() => ArlStorageStatus::secure(),
-        Ok(_) => ArlStorageStatus::none(None),
-        Err(e) => ArlStorageStatus::none(Some(e)),
+        Ok(Some(arl)) if !arl.trim().is_empty() => ArlStorageStatus {
+            storage: Some(ArlStorage::Keyring),
+            reason: disk_hardening_error,
+        },
+        Ok(_) => ArlStorageStatus::none(disk_hardening_error),
+        Err(e) => ArlStorageStatus::none(Some(
+            disk_hardening_error
+                .map(|disk_error| format!("{}; {}", disk_error, e))
+                .unwrap_or(e),
+        )),
     }
 }
 
-fn verify_private_file(file: &std::fs::File) -> Result<(), String> {
+fn ensure_regular_file(file: &std::fs::File) -> Result<(), String> {
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     if !metadata.is_file() {
         return Err("settings.json is not a regular file".to_string());
     }
+
+    Ok(())
+}
+
+fn enforce_private_file(file: &std::fs::File) -> Result<(), String> {
+    ensure_regular_file(file)?;
 
     #[cfg(unix)]
     {
@@ -208,7 +233,12 @@ fn verify_private_file(file: &std::fs::File) -> Result<(), String> {
     Ok(())
 }
 
-fn read_private(path: &Path) -> Result<Option<String>, String> {
+struct PrivateFileContents {
+    data: String,
+    hardening_error: Option<String>,
+}
+
+fn read_private(path: &Path) -> Result<Option<PrivateFileContents>, String> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -228,11 +258,33 @@ fn read_private(path: &Path) -> Result<Option<String>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    verify_private_file(&file)?;
+    ensure_regular_file(&file)?;
+    let hardening_error = enforce_private_file(&file).err();
 
     let mut data = String::new();
     file.read_to_string(&mut data).map_err(|e| e.to_string())?;
-    Ok(Some(data))
+    Ok(Some(PrivateFileContents {
+        data,
+        hardening_error,
+    }))
+}
+
+fn parse_private_settings(contents: PrivateFileContents) -> Result<Settings, String> {
+    let settings: Settings =
+        serde_json::from_str(&contents.data).map_err(|e| e.to_string())?;
+    if let Some(error) = contents.hardening_error {
+        if !settings.arl.trim().is_empty() {
+            return Err(format!(
+                "Refusing to load a plaintext ARL without private file permissions: {}",
+                error
+            ));
+        }
+        eprintln!(
+            "Warning: could not restrict permissions on ARL-free settings.json: {}",
+            error
+        );
+    }
+    Ok(settings)
 }
 
 #[cfg(not(windows))]
@@ -309,7 +361,7 @@ fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
         };
 
         let write_result = (|| {
-            verify_private_file(&file)?;
+            enforce_private_file(&file)?;
             file.write_all(data).map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
             drop(file);
@@ -383,10 +435,8 @@ impl Settings {
 
     pub fn load(app: &tauri::AppHandle) -> Result<Self, String> {
         let path = Self::path(app)?;
-        let mut settings: Self = if let Some(data) = read_private(&path).map_err(|e| {
-                format!("Refusing to load settings without private file permissions: {}", e)
-            })? {
-            serde_json::from_str(&data).map_err(|e| e.to_string())?
+        let mut settings: Self = if let Some(contents) = read_private(&path)? {
+            parse_private_settings(contents)?
         } else {
             Self::default()
         };
@@ -423,6 +473,9 @@ impl Settings {
         self.validate()?;
 
         let path = Self::path(app)?;
+        // Commit the new credential to the private file first. If a later keyring
+        // or redaction step fails, the same new ARL remains authoritative instead
+        // of allowing an older plaintext credential to overwrite the keyring value.
         let data = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         write_private(&path, data.as_bytes())?;
 
@@ -454,7 +507,7 @@ impl Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_private, write_private};
+    use super::{parse_private_settings, read_private, write_private, PrivateFileContents, Settings};
     #[cfg(unix)]
     use std::ffi::CString;
     #[cfg(unix)]
@@ -479,6 +532,35 @@ mod tests {
         path
     }
 
+    fn read_data(path: &std::path::Path) -> String {
+        let contents = read_private(path)
+            .expect("private read should succeed")
+            .expect("settings file should exist");
+        assert!(contents.hardening_error.is_none());
+        contents.data
+    }
+
+    #[test]
+    fn hardening_failure_only_rejects_settings_with_an_arl() {
+        let settings = Settings::default();
+        let data = serde_json::to_string(&settings).expect("settings should serialize");
+        let loaded = parse_private_settings(PrivateFileContents {
+            data,
+            hardening_error: Some("permission denied".to_string()),
+        });
+        assert!(loaded.is_ok());
+
+        let mut settings_with_arl = settings;
+        settings_with_arl.arl = "secret".to_string();
+        let data = serde_json::to_string(&settings_with_arl).expect("settings should serialize");
+        let error = parse_private_settings(PrivateFileContents {
+            data,
+            hardening_error: Some("permission denied".to_string()),
+        })
+        .expect_err("plaintext ARL must be rejected");
+        assert!(error.contains("plaintext ARL"));
+    }
+
     #[test]
     fn private_file_round_trip_succeeds() {
         let dir = test_dir("permissions");
@@ -494,20 +576,29 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o077, 0);
         }
-        assert_eq!(
-            read_private(&path)
-                .expect("private read should succeed")
-                .as_deref(),
-            Some(r#"{"arl":"secret"}"#)
-        );
+        assert_eq!(read_data(&path), r#"{"arl":"secret"}"#);
 
         write_private(&path, b"replacement").expect("private replacement should succeed");
-        assert_eq!(
-            read_private(&path)
-                .expect("replacement should be readable")
-                .as_deref(),
-            Some("replacement")
-        );
+        assert_eq!(read_data(&path), "replacement");
+
+        std::fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn world_readable_settings_are_hardened_before_use() {
+        let dir = test_dir("world-readable");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, b"settings").expect("settings file should be written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("test permissions should be applied");
+
+        assert_eq!(read_data(&path), "settings");
+        let mode = std::fs::metadata(&path)
+            .expect("settings file should exist")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0);
 
         std::fs::remove_dir_all(dir).expect("test directory should be removed");
     }
@@ -551,12 +642,7 @@ mod tests {
         write_private(&link, b"replacement").expect("private write should replace the link");
 
         assert_eq!(std::fs::read(&target).expect("target should remain"), b"unchanged");
-        assert_eq!(
-            read_private(&link)
-                .expect("replacement should be readable")
-                .as_deref(),
-            Some("replacement")
-        );
+        assert_eq!(read_data(&link), "replacement");
 
         std::fs::remove_dir_all(dir).expect("test directory should be removed");
     }
