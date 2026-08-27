@@ -4,6 +4,8 @@ use super::*;
 #[allow(non_snake_case)]
 pub async fn download_track(
     trackId: String,
+    playlistId: Option<String>,
+    playlistName: Option<String>,
     state: tauri::State<'_, AppState>,
     app: AppHandle,
 ) -> Result<DownloadResult, String> {
@@ -16,7 +18,15 @@ pub async fn download_track(
         cancellation_map.insert(trackId.clone(), cancel_flag.clone());
     }
 
-    let result = execute_download_track(&trackId, &state, &app, cancel_flag).await;
+    let result = execute_download_track(
+        &trackId,
+        playlistId.as_deref(),
+        playlistName.as_deref(),
+        &state,
+        &app,
+        cancel_flag,
+    )
+    .await;
 
     // Always remove the registration, including authentication and refresh
     // failures that return before the streaming download begins.
@@ -33,21 +43,32 @@ pub async fn download_track(
 
 async fn execute_download_track(
     track_id: &str,
+    playlist_id: Option<&str>,
+    playlist_name: Option<&str>,
     state: &AppState,
     app: &AppHandle,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DownloadResult, String> {
     // Get or recreate the client
-    let (mut client, output_dir, quality, folder_structure, custom_folder_template, arl) = {
+    let (
+        mut client,
+        output_dir,
+        quality,
+        folder_structure,
+        custom_folder_template,
+        arl,
+    ) = {
         let lock = state.client.lock().await;
         let settings = state.settings.lock().await;
-        
+
         let client = if let Some(c) = lock.as_ref() {
             c.clone()
         } else {
-            return Err("Not logged in. Please set your ARL token in Settings.".to_string());
+            return Err(
+                "Not logged in. Please set your ARL token in Settings.".to_string()
+            );
         };
-        
+
         (
             client,
             settings.output_dir.clone(),
@@ -57,7 +78,7 @@ async fn execute_download_track(
             settings.arl.clone(),
         )
     };
-    
+
     // If token is empty or invalid, try to refresh the client
     if client.token.is_empty() && !arl.is_empty() {
         match DeezerClient::new(&arl).await {
@@ -89,18 +110,23 @@ async fn execute_download_track(
         &effective_quality,
         &folder_structure,
         &custom_folder_template,
+        playlist_id,
+        playlist_name,
         app,
         cancel_flag.clone(),
     )
     .await;
-    
+
     // If we get a CSRF error, try to refresh the client and retry once
     if let Err(ref e) = result {
-        if !cancel_flag.load(Ordering::Relaxed) && (e.contains("CSRF") || e.contains("token")) {
+        if !cancel_flag.load(Ordering::Relaxed)
+            && (e.contains("CSRF") || e.contains("token"))
+        {
             match DeezerClient::new(&arl).await {
                 Ok(new_client) => {
                     client = new_client.clone();
                     install_client_if_current(state, &arl, new_client).await;
+
                     let mut retry_quality = quality.clone();
                     if client
                         .user
@@ -119,13 +145,18 @@ async fn execute_download_track(
                         &retry_quality,
                         &folder_structure,
                         &custom_folder_template,
+                        playlist_id,
+                        playlist_name,
                         app,
                         cancel_flag.clone(),
                     )
                     .await;
                 }
                 Err(_) => {
-                    return Err(format!("Session expired. Please go to Settings and log in again. Error: {}", e));
+                    return Err(format!(
+                        "Session expired. Please go to Settings and log in again. Error: {}",
+                        e
+                    ));
                 }
             }
         }
@@ -134,9 +165,14 @@ async fn execute_download_track(
     result
 }
 
-async fn install_client_if_current(state: &AppState, refreshed_arl: &str, client: DeezerClient) {
+async fn install_client_if_current(
+    state: &AppState,
+    refreshed_arl: &str,
+    client: DeezerClient,
+) {
     let _settings_io = state.settings_io.lock().await;
     let arl_is_current = state.settings.lock().await.arl == refreshed_arl;
+
     if arl_is_current {
         *state.client.lock().await = Some(client);
     }
@@ -149,6 +185,7 @@ pub async fn cancel_download(
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
     let cancellation_map = state.download_cancellations.lock().await;
+
     if let Some(flag) = cancellation_map.get(&trackId) {
         flag.store(true, Ordering::Relaxed);
         Ok(true)

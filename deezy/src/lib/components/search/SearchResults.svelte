@@ -20,7 +20,10 @@
     isTrackPlaying: (track: Track) => boolean;
     playTrack: (track: Track) => void;
     openArtist: (id: number, name: string, picture: string) => Promise<void>;
-    downloadTrack: (track: Track) => Promise<void>;
+    downloadTrack: (
+      track: Track,
+      playlist?: SelectedPlaylist
+    ) => Promise<void>;
     downloadStates: Map<string, string>;
     searching: boolean;
     errorMsg: string;
@@ -146,7 +149,7 @@
             <div class="track-actions">
               <button 
                 class="btn-download {downloadStates.get(String(track.id)) === 'downloading' ? 'downloading' : ''} {downloadStates.get(String(track.id)) === 'complete' ? 'done' : ''}"
-                onclick={() => downloadTrack(track)}
+                onclick={() => downloadTrack(track, selectedPlaylist ?? undefined)}
                 title={$_('search.track.download')}
               >
                 {#if downloadStates.get(String(track.id)) === 'downloading'}

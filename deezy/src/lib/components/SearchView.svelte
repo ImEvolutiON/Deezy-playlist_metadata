@@ -1,6 +1,13 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { loggedIn, downloads, searchHistory, audioPlayer, type Track } from '$lib/stores';
+  import {
+    loggedIn,
+    downloads,
+    searchHistory,
+    audioPlayer,
+    type Track,
+    type DownloadSource
+  } from '$lib/stores';
   import { downloadQueueManager } from '$lib/downloadQueue';
   import { searchRateLimiter } from '$lib/rateLimiter';
   import { onMount } from 'svelte';
@@ -345,6 +352,18 @@
     playlistError = '';
   }
 
+  function playlistSource(
+    playlist:
+      | Pick<SelectedPlaylist, 'id' | 'title'>
+      | Pick<PlaylistResult, 'id' | 'title'>
+  ): DownloadSource {
+    return {
+      type: 'playlist',
+      playlistId: String(playlist.id),
+      playlistName: playlist.title
+    };
+  }
+
   async function downloadPlaylist(playlist: SelectedPlaylist): Promise<void> {
     if (downloadingPlaylists.has(playlist.id)) return;
     downloadingPlaylists = new Set([...downloadingPlaylists, playlist.id]);
@@ -355,7 +374,7 @@
         tracks = await invoke<Track[]>('get_playlist_tracks', { playlistId: String(playlist.id) });
       }
       for (const track of tracks) {
-        await downloadQueueManager.addToQueue(track);
+        await downloadQueueManager.addToQueue(track, playlistSource(playlist));
       }
     } catch (err) {
       errorMsg = $_('search.playlist.downloadError', { values: { error: String(err) } });
@@ -371,7 +390,7 @@
     try {
       const tracks = await invoke<Track[]>('get_playlist_tracks', { playlistId: String(playlist.id) });
       for (const track of tracks) {
-        await downloadQueueManager.addToQueue(track);
+        await downloadQueueManager.addToQueue(track, playlistSource(playlist));
       }
     } catch (err) {
       errorMsg = $_('search.playlist.downloadError', { values: { error: String(err) } });
@@ -380,11 +399,30 @@
     }
   }
 
-  async function downloadTrack(track: Track): Promise<void> {
+  async function downloadTrack(
+    track: Track,
+    playlist?: SelectedPlaylist
+  ): Promise<void> {
     const trackId = String(track.id);
     const state = downloadStates.get(trackId);
-    if (['resolving', 'downloading', 'tagging', 'complete'].includes(state ?? '')) return;
-    await downloadQueueManager.addToQueue(track);
+
+    // En téléchargement direct, on garde le comportement historique :
+    // une piste déjà terminée/en cours n'est pas re-téléchargée.
+    //
+    // Depuis une playlist, on autorise le re-téléchargement afin que
+    // PLAYLIST / DEEZER_PLAYLIST_ID puissent être récupérés puis fusionnés
+    // par le pipeline du NAS.
+    if (
+      !playlist &&
+      ['resolving', 'downloading', 'tagging', 'complete'].includes(state ?? '')
+    ) {
+      return;
+    }
+
+    await downloadQueueManager.addToQueue(
+      track,
+      playlist ? playlistSource(playlist) : undefined
+    );
   }
 
   async function downloadAlbum(album: AlbumResult): Promise<void> {
@@ -436,14 +474,24 @@
           urlInput = '';
           break;
           
-        case 'playlist':
+        case 'playlist': {
+          const playlistTitle = await invoke<string>('get_playlist_title', { playlistId: parsed.id });
           const playlistTracks = await invoke<Track[]>('get_playlist_tracks', { playlistId: parsed.id });
+
+          const source = {
+            type: 'playlist' as const,
+            playlistId: parsed.id,
+            playlistName: playlistTitle
+          };
+
           for (const track of playlistTracks) {
-            await downloadQueueManager.addToQueue(track);
+            await downloadQueueManager.addToQueue(track, source);
           }
+
           urlInput = '';
           break;
-          
+        }
+
         case 'artist':
           // For artists, we'll get their albums and download all tracks
           const artistAlbums = await invoke<AlbumResult[]>('get_artist_albums', { artistId: parsed.id });

@@ -110,6 +110,22 @@ pub async fn search_playlists(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn get_playlist_title(
+    playlistId: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let client = {
+        let lock = state.client.lock().await;
+        lock
+            .as_ref()
+            .cloned()
+            .ok_or("Not logged in. Set your ARL token in Settings.")?
+    };
+
+    client.get_playlist_title(&playlistId).await
+}
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn get_playlist_tracks(
     playlistId: String,
     state: tauri::State<'_, AppState>,

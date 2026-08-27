@@ -318,6 +318,48 @@ impl DeezerClient {
         Ok(playlists)
     }
 
+    pub async fn get_playlist_title(
+        &self,
+        playlist_id: &str,
+    ) -> Result<String, String> {
+        let url = format!("{}/playlist/{}", LEGACY_API_URL, playlist_id);
+
+        let res = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to get playlist metadata: {}", e))?;
+
+        let data: Value = response_json(res)
+            .await
+            .map_err(|e| format!("Failed to parse playlist metadata: {}", e))?;
+
+        if let Some(error) = data.get("error") {
+            if let Some(message) = error.get("message").and_then(|m| m.as_str()) {
+                return Err(format!("API error: {}", message));
+            }
+
+            if error
+                .as_object()
+                .map(|object| !object.is_empty())
+                .unwrap_or(false)
+            {
+                return Err(format!("API error: {}", error));
+            }
+        }
+
+        let title = data["title"]
+            .as_str()
+            .unwrap_or("")
+            .trim();
+
+        if title.is_empty() {
+            return Err("Playlist title not found".to_string());
+        }
+
+        Ok(title.to_string())
+    }
     pub async fn get_playlist_tracks(
         &self,
         playlist_id: &str,

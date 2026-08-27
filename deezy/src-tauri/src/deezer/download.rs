@@ -24,6 +24,8 @@ pub async fn download_track(
     quality: &str,
     folder_structure: &FolderStructure,
     custom_folder_template: &str,
+    playlist_id: Option<&str>,
+    playlist_name: Option<&str>,
     app: &tauri::AppHandle,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<DownloadResult, String> {
@@ -254,9 +256,30 @@ pub async fn download_track(
     emit_progress(app, track_id, &full_title, 92.0, "tagging");
 
     let tag_result = if ext == ".mp3" {
-        write_mp3_tags(&temp_download_path, &full_title, &artist, &album_title, track_data, client, &album_id).await
+        write_mp3_tags(
+            &temp_download_path,
+            &full_title,
+            &artist,
+            &album_title,
+            track_data,
+            client,
+            &album_id,
+        )
+        .await
     } else if ext == ".flac" {
-        write_flac_tags(&temp_download_path, &full_title, &artist, &album_title, track_data, client, &album_id).await
+        write_flac_tags(
+            &temp_download_path,
+            &full_title,
+            &artist,
+            &album_title,
+            track_data,
+            client,
+            &album_id,
+            track_id,
+            playlist_id,
+            playlist_name,
+        )
+        .await
     } else {
         Ok(())
     };
@@ -422,6 +445,9 @@ async fn write_flac_tags(
     track_data: &Value,
     client: &DeezerClient,
     album_id: &str,
+    track_id: &str,
+    playlist_id: Option<&str>,
+    playlist_name: Option<&str>,
 ) -> Result<(), String> {
     let read_path = path.to_path_buf();
     let mut tag = tokio::task::spawn_blocking(move || {
@@ -433,6 +459,21 @@ async fn write_flac_tags(
     tag.set_vorbis("TITLE", vec![title]);
     tag.set_vorbis("ARTIST", vec![artist]);
     tag.set_vorbis("ALBUM", vec![album]);
+
+    // Identifiant stable fourni par Deezer. Il est écrit sur tous les FLAC,
+    // même lorsqu'ils sont téléchargés individuellement.
+    tag.set_vorbis("DEEZER_TRACK_ID", vec![track_id]);
+
+    // Lorsqu'un morceau provient d'une playlist, on conserve aussi sa
+    // provenance. Le NAS pourra ensuite fusionner plusieurs PLAYLIST et
+    // DEEZER_PLAYLIST_ID sur un seul FLAC canonique.
+    if let Some(name) = playlist_name.filter(|name| !name.is_empty()) {
+        tag.set_vorbis("PLAYLIST", vec![name]);
+    }
+
+    if let Some(id) = playlist_id.filter(|id| !id.is_empty()) {
+        tag.set_vorbis("DEEZER_PLAYLIST_ID", vec![id]);
+    }
 
     if let Some(album_artist) = track_data["ART_NAME"].as_str() {
         tag.set_vorbis("ALBUMARTIST", vec![album_artist]);

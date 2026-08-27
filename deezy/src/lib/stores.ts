@@ -53,6 +53,12 @@ export interface Track {
   preview?: string;
 }
 
+export interface DownloadSource {
+  type: 'playlist';
+  playlistId: string;
+  playlistName: string;
+}
+
 export interface DownloadItem {
   trackId: string;
   title: string;
@@ -66,6 +72,7 @@ export interface DownloadItem {
   isPaused?: boolean;
   timestamp?: string;
   filePath?: string;
+  source?: DownloadSource;
   requestedQuality?: QualityOption;
   actualQuality?: QualityOption;
 }
@@ -73,6 +80,7 @@ export interface DownloadItem {
 export interface QueuedDownload {
   track: Track;
   priority: number;
+  source?: DownloadSource;
 }
 
 export interface AudioPlayerState {
