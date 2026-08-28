@@ -1,4 +1,4 @@
-﻿use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,174 +18,6 @@ const MAX_TRACK_DOWNLOAD_BYTES: u64 = 1024 * 1024 * 1024; // 1 GiB safety cap
 const IN_PROGRESS_SUFFIX: &str = ".deezy.part";
 
 pub async fn download_track(
-    client: &DeezerClient,
-    track_id: &str,
-    output_dir: &str,
-    quality: &str,
-    folder_structure: &FolderStructure,
-    custom_folder_template: &str,
-    playlist_id: Option<&str>,
-    playlist_name: Option<&str>,
-    app: &tauri::AppHandle,
-    cancel_flag: Arc<AtomicBool>,
-) -> Result<DownloadResult, String> {
-    let result = download_track_inner(
-        client,
-        track_id,
-        output_dir,
-        quality,
-        folder_structure,
-        custom_folder_template,
-        playlist_id,
-        playlist_name,
-        app,
-        cancel_flag,
-    )
-    .await;
-
-    if let Err(ref error) = result {
-        if let Err(log_error) = log_failed_download(
-            client,
-            track_id,
-            output_dir,
-            quality,
-            playlist_id,
-            playlist_name,
-            error,
-        )
-        .await
-        {
-            eprintln!(
-                "Failed to record failed download for track {}: {}",
-                track_id, log_error
-            );
-        }
-    }
-
-    result
-}
-
-async fn log_failed_download(
-    client: &DeezerClient,
-    track_id: &str,
-    output_dir: &str,
-    quality: &str,
-    playlist_id: Option<&str>,
-    playlist_name: Option<&str>,
-    error: &str,
-) -> Result<(), String> {
-    let failed_dir = PathBuf::from(output_dir).join("_failed");
-    tokio::fs::create_dir_all(&failed_dir)
-        .await
-        .map_err(|e| format!("Cannot create failed-download directory: {}", e))?;
-
-    let log_path = failed_dir.join("deezy-failures.jsonl");
-
-    // Metadata lookup is best-effort. A failure to fetch metadata must never
-    // hide the original download failure.
-    let track = client.get_track(track_id).await.ok();
-
-    let track_data = track.as_ref().map(|track| {
-        if track.get("DATA").is_some() {
-            &track["DATA"]
-        } else {
-            track
-        }
-    });
-
-    let title = track_data
-        .and_then(|t| t["SNG_TITLE"].as_str())
-        .unwrap_or("");
-    let version = track_data
-        .and_then(|t| t["VERSION"].as_str())
-        .unwrap_or("");
-    let artist = track_data
-        .and_then(|t| t["ART_NAME"].as_str())
-        .unwrap_or("");
-    let album = track_data
-        .and_then(|t| t["ALB_TITLE"].as_str())
-        .unwrap_or("");
-    let album_id = track_data
-        .and_then(|t| extract_stringish(&t["ALB_ID"]));
-    let isrc = track_data
-        .and_then(|t| t["ISRC"].as_str())
-        .map(str::to_string);
-    let duration = track_data
-        .and_then(|t| t["DURATION"].as_u64().or_else(|| {
-            t["DURATION"]
-                .as_str()
-                .and_then(|v| v.parse::<u64>().ok())
-        }));
-    let explicit = track_data
-        .and_then(|t| t["EXPLICIT_LYRICS"].as_bool().or_else(|| {
-            t["EXPLICIT_LYRICS"]
-                .as_u64()
-                .map(|v| v != 0)
-        }));
-    let media_version = track_data
-        .and_then(|t| t["MEDIA_VERSION"].as_str())
-        .map(str::to_string);
-
-    // UNIX time avoids adding a new chrono dependency.
-    let timestamp_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-
-    let entry = serde_json::json!({
-        "timestamp_unix": timestamp_unix,
-        "deezer_track_id": track_id,
-        "title": title,
-        "version": version,
-        "artist": artist,
-        "album": album,
-        "deezer_album_id": album_id,
-        "isrc": isrc,
-        "duration_seconds": duration,
-        "explicit": explicit,
-        "media_version": media_version,
-        "requested_quality": quality,
-        "playlist": playlist_name,
-        "deezer_playlist_id": playlist_id,
-        "error": error
-    });
-
-    let mut line = serde_json::to_vec(&entry)
-        .map_err(|e| format!("Cannot serialize failed download: {}", e))?;
-    line.push(b'\n');
-
-    let mut out = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .await
-        .map_err(|e| format!("Cannot open {}: {}", log_path.display(), e))?;
-
-    out.write_all(&line)
-        .await
-        .map_err(|e| format!("Cannot append {}: {}", log_path.display(), e))?;
-
-    out.flush()
-        .await
-        .map_err(|e| format!("Cannot flush {}: {}", log_path.display(), e))?;
-
-    eprintln!(
-        "Recorded failed download: track={} playlist={} -> {}",
-        track_id,
-        playlist_name.unwrap_or("<none>"),
-        log_path.display()
-    );
-
-    Ok(())
-}
-
-fn extract_stringish(value: &Value) -> Option<String> {
-    value
-        .as_str()
-        .map(str::to_string)
-        .or_else(|| value.as_u64().map(|v| v.to_string()))
-}
-async fn download_track_inner(
     client: &DeezerClient,
     track_id: &str,
     output_dir: &str,
@@ -453,7 +285,7 @@ async fn download_track_inner(
     };
 
     if let Err(e) = tag_result {
-        // Tag writing failed â€” the audio file itself is intact and usable,
+        // Tag writing failed — the audio file itself is intact and usable,
         // so we emit a warning event rather than failing the whole download.
         eprintln!("Warning: failed to write tags: {}", e);
         let _ = app.emit("tag-writing-error", serde_json::json!({
@@ -628,8 +460,8 @@ async fn write_flac_tags(
     tag.set_vorbis("ARTIST", vec![artist]);
     tag.set_vorbis("ALBUM", vec![album]);
 
-    // Identifiant stable fourni par Deezer. Il est Ã©crit sur tous les FLAC,
-    // mÃªme lorsqu'ils sont tÃ©lÃ©chargÃ©s individuellement.
+    // Identifiant stable fourni par Deezer. Il est écrit sur tous les FLAC,
+    // même lorsqu'ils sont téléchargés individuellement.
     tag.set_vorbis("DEEZER_TRACK_ID", vec![track_id]);
 
     // Lorsqu'un morceau provient d'une playlist, on conserve aussi sa
@@ -1039,4 +871,3 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("test directory should be removed");
     }
 }
-
